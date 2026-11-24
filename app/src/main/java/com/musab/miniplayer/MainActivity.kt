@@ -1,9 +1,16 @@
 
 package com.musab.miniplayer
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.database.Cursor
+import android.os.Build
 import android.os.Bundle
+import android.provider.MediaStore
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -18,9 +25,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private val Background = Color(0xFF101016)
 private val SurfaceDark = Color(0xFF1D1C27)
@@ -28,21 +39,132 @@ private val Accent = Color(0xFFB69CFF)
 private val TextPrimary = Color(0xFFF5F2FA)
 private val TextSecondary = Color(0xFF9995A7)
 
+data class Song(
+    val id: Long,
+    val title: String,
+    val artist: String,
+    val duration: Long
+)
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         setContent {
             MiniPlayerApp()
         }
     }
 }
 
+private fun audioPermission(): String {
+    return if (Build.VERSION.SDK_INT >= 33) {
+        Manifest.permission.READ_MEDIA_AUDIO
+    } else {
+        Manifest.permission.READ_EXTERNAL_STORAGE
+    }
+}
+
+private suspend fun loadSongs(): List<Song> =
+    withContext(Dispatchers.IO) {
+        val songs = mutableListOf<Song>()
+        val context = AppContextHolder.context ?: return@withContext songs
+
+        val collection =
+            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+
+        val projection = arrayOf(
+            MediaStore.Audio.Media._ID,
+            MediaStore.Audio.Media.TITLE,
+            MediaStore.Audio.Media.ARTIST,
+            MediaStore.Audio.Media.DURATION
+        )
+
+        val selection =
+            "${MediaStore.Audio.Media.IS_MUSIC} != 0"
+
+        val sortOrder =
+            "${MediaStore.Audio.Media.TITLE} ASC"
+
+        val cursor: Cursor? = context.contentResolver.query(
+            collection,
+            projection,
+            selection,
+            null,
+            sortOrder
+        )
+
+        cursor?.use {
+            val idColumn =
+                it.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+            val titleColumn =
+                it.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
+            val artistColumn =
+                it.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
+            val durationColumn =
+                it.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
+
+            while (it.moveToNext()) {
+                songs.add(
+                    Song(
+                        id = it.getLong(idColumn),
+                        title = it.getString(titleColumn) ?: "Unknown Track",
+                        artist = it.getString(artistColumn) ?: "Unknown Artist",
+                        duration = it.getLong(durationColumn)
+                    )
+                )
+            }
+        }
+
+        songs
+    }
+
+// يحتفظ بسياق التطبيق للوصول إلى ملفات الموسيقى
+private object AppContextHolder {
+    var context: android.content.Context? = null
+}
+
 @Composable
 fun MiniPlayerApp() {
+    val context = LocalContext.current
+
     var isPlaying by remember { mutableStateOf(false) }
     var isFavorite by remember { mutableStateOf(false) }
     var progress by remember { mutableFloatStateOf(0.35f) }
+
+    var selectedSong by remember {
+        mutableStateOf(
+            Song(0, "Your First Track", "Unknown Artist", 238000)
+        )
+    }
+
+    var currentTab by remember { mutableStateOf("player") }
+    var songs by remember { mutableStateOf<List<Song>>(emptyList()) }
+    var hasPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(
+                context,
+                audioPermission()
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    var loading by remember { mutableStateOf(false) }
+
+    AppContextHolder.context = context.applicationContext
+
+    val permissionLauncher =
+        rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestPermission()
+        ) { granted ->
+            hasPermission = granted
+        }
+
+    LaunchedEffect(hasPermission) {
+        if (hasPermission) {
+            loading = true
+            songs = loadSongs()
+            loading = false
+        }
+    }
 
     MaterialTheme {
         Surface(
@@ -59,11 +181,11 @@ fun MiniPlayerApp() {
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "MINIPLAYER",
+                        "MINIPLAYER",
                         color = TextPrimary,
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Bold,
@@ -71,7 +193,7 @@ fun MiniPlayerApp() {
                     )
 
                     Text(
-                        text = "⋮",
+                        "⋮",
                         color = TextPrimary,
                         fontSize = 28.sp
                     )
@@ -79,176 +201,36 @@ fun MiniPlayerApp() {
 
                 Spacer(modifier = Modifier.height(28.dp))
 
-                Text(
-                    text = "NOW PLAYING",
-                    color = TextSecondary,
-                    fontSize = 11.sp,
-                    letterSpacing = 3.sp
-                )
-
-                Spacer(modifier = Modifier.height(18.dp))
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(1f)
-                        .clip(RoundedCornerShape(28.dp))
-                        .background(
-                            Brush.linearGradient(
-                                colors = listOf(
-                                    Color(0xFF563C91),
-                                    Color(0xFFB65F83),
-                                    Color(0xFFEFAD78)
-                                )
-                            )
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(230.dp)
-                            .clip(CircleShape)
-                            .background(
-                                Brush.linearGradient(
-                                    colors = listOf(
-                                        Color(0xFF30204F),
-                                        Color(0xFF171522)
-                                    )
-                                )
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(150.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    Brush.linearGradient(
-                                        colors = listOf(
-                                            Color(0xFFE9A1B5),
-                                            Color(0xFF7953A7)
-                                        )
-                                    )
-                                )
-                        )
-                    }
-
-                    Text(
-                        text = "M",
-                        color = Color.White.copy(alpha = 0.8f),
-                        fontSize = 42.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(28.dp))
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(
-                            text = "Your First Track",
-                            color = TextPrimary,
-                            fontSize = 23.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        Text(
-                            text = "Unknown Artist",
-                            color = TextSecondary,
-                            fontSize = 15.sp
-                        )
-                    }
-
-                    Text(
-                        text = if (isFavorite) "♥" else "♡",
-                        color = Accent,
-                        fontSize = 30.sp,
-                        modifier = Modifier.clickable {
+                if (currentTab == "player") {
+                    PlayerScreen(
+                        song = selectedSong,
+                        isPlaying = isPlaying,
+                        isFavorite = isFavorite,
+                        progress = progress,
+                        onFavorite = {
                             isFavorite = !isFavorite
+                        },
+                        onPlay = {
+                            isPlaying = !isPlaying
+                        },
+                        onProgress = {
+                            progress = it
                         }
                     )
-                }
-
-                Spacer(modifier = Modifier.height(25.dp))
-
-                Slider(
-                    value = progress,
-                    onValueChange = { progress = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = SliderDefaults.colors(
-                        thumbColor = Accent,
-                        activeTrackColor = Accent,
-                        inactiveTrackColor = SurfaceDark
-                    )
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("1:24", color = TextSecondary, fontSize = 12.sp)
-                    Text("3:58", color = TextSecondary, fontSize = 12.sp)
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "↻",
-                        color = TextSecondary,
-                        fontSize = 25.sp
-                    )
-
-                    Text(
-                        text = "◀",
-                        color = TextPrimary,
-                        fontSize = 27.sp
-                    )
-
-                    Box(
-                        modifier = Modifier
-                            .size(72.dp)
-                            .clip(CircleShape)
-                            .background(
-                                Brush.linearGradient(
-                                    colors = listOf(
-                                        Color(0xFFC6A9FF),
-                                        Color(0xFF8E72D9)
-                                    )
-                                )
-                            )
-                            .clickable {
-                                isPlaying = !isPlaying
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = if (isPlaying) "Ⅱ" else "▶",
-                            color = Color.White,
-                            fontSize = 30.sp
-                        )
-                    }
-
-                    Text(
-                        text = "▶",
-                        color = TextPrimary,
-                        fontSize = 27.sp
-                    )
-
-                    Text(
-                        text = "⇄",
-                        color = TextSecondary,
-                        fontSize = 24.sp
+                } else {
+                    LibraryScreen(
+                        songs = songs,
+                        loading = loading,
+                        hasPermission = hasPermission,
+                        onRequestPermission = {
+                            permissionLauncher.launch(audioPermission())
+                        },
+                        onSongSelected = { song ->
+                            selectedSong = song
+                            progress = 0f
+                            isPlaying = false
+                            currentTab = "player"
+                        }
                     )
                 }
 
@@ -263,13 +245,311 @@ fun MiniPlayerApp() {
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("☷", color = TextSecondary, fontSize = 23.sp)
-                    Text("♫", color = Accent, fontSize = 23.sp)
-                    Text("☰", color = TextSecondary, fontSize = 23.sp)
+                    Text(
+                        "☷",
+                        color = if (currentTab == "library") Accent else TextSecondary,
+                        fontSize = 23.sp,
+                        modifier = Modifier.clickable {
+                            currentTab = "library"
+                        }
+                    )
+
+                    Text(
+                        "♫",
+                        color = if (currentTab == "player") Accent else TextSecondary,
+                        fontSize = 23.sp,
+                        modifier = Modifier.clickable {
+                            currentTab = "player"
+                        }
+                    )
+
+                    Text(
+                        "☰",
+                        color = TextSecondary,
+                        fontSize = 23.sp
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
             }
         }
     }
+}
+
+@Composable
+fun PlayerScreen(
+    song: Song,
+    isPlaying: Boolean,
+    isFavorite: Boolean,
+    progress: Float,
+    onFavorite: () -> Unit,
+    onPlay: () -> Unit,
+    onProgress: (Float) -> Unit
+) {
+    Text(
+        "NOW PLAYING",
+        color = TextSecondary,
+        fontSize = 11.sp,
+        letterSpacing = 3.sp
+    )
+
+    Spacer(modifier = Modifier.height(18.dp))
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(1f)
+            .clip(RoundedCornerShape(28.dp))
+            .background(
+                Brush.linearGradient(
+                    listOf(
+                        Color(0xFF563C91),
+                        Color(0xFFB65F83),
+                        Color(0xFFEFAD78)
+                    )
+                )
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(230.dp)
+                .clip(CircleShape)
+                .background(
+                    Brush.linearGradient(
+                        listOf(
+                            Color(0xFF30204F),
+                            Color(0xFF171522)
+                        )
+                    )
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(150.dp)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.linearGradient(
+                            listOf(
+                                Color(0xFFE9A1B5),
+                                Color(0xFF7953A7)
+                            )
+                        )
+                    )
+            )
+        }
+
+        Text(
+            "M",
+            color = Color.White.copy(alpha = 0.8f),
+            fontSize = 42.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
+
+    Spacer(modifier = Modifier.height(28.dp))
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                song.title,
+                color = TextPrimary,
+                fontSize = 23.sp,
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                song.artist,
+                color = TextSecondary,
+                fontSize = 15.sp
+            )
+        }
+
+        Text(
+            if (isFavorite) "♥" else "♡",
+            color = Accent,
+            fontSize = 30.sp,
+            modifier = Modifier.clickable {
+                onFavorite()
+            }
+        )
+    }
+
+    Spacer(modifier = Modifier.height(25.dp))
+
+    Slider(
+        value = progress,
+        onValueChange = onProgress,
+        modifier = Modifier.fillMaxWidth(),
+        colors = SliderDefaults.colors(
+            thumbColor = Accent,
+            activeTrackColor = Accent,
+            inactiveTrackColor = SurfaceDark
+        )
+    )
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text("0:00", color = TextSecondary, fontSize = 12.sp)
+        Text(
+            formatDuration(song.duration),
+            color = TextSecondary,
+            fontSize = 12.sp
+        )
+    }
+
+    Spacer(modifier = Modifier.height(24.dp))
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("↻", color = TextSecondary, fontSize = 25.sp)
+        Text("◀", color = TextPrimary, fontSize = 27.sp)
+
+        Box(
+            modifier = Modifier
+                .size(72.dp)
+                .clip(CircleShape)
+                .background(
+                    Brush.linearGradient(
+                        listOf(
+                            Color(0xFFC6A9FF),
+                            Color(0xFF8E72D9)
+                        )
+                    )
+                )
+                .clickable { onPlay() },
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                if (isPlaying) "Ⅱ" else "▶",
+                color = Color.White,
+                fontSize = 30.sp
+            )
+        }
+
+        Text("▶", color = TextPrimary, fontSize = 27.sp)
+        Text("⇄", color = TextSecondary, fontSize = 24.sp)
+    }
+}
+
+@Composable
+fun LibraryScreen(
+    songs: List<Song>,
+    loading: Boolean,
+    hasPermission: Boolean,
+    onRequestPermission: () -> Unit,
+    onSongSelected: (Song) -> Unit
+) {
+    Text(
+        "MUSIC LIBRARY",
+        color = TextPrimary,
+        fontSize = 21.sp,
+        fontWeight = FontWeight.Bold
+    )
+
+    Spacer(modifier = Modifier.height(8.dp))
+
+    Text(
+        "${songs.size} songs",
+        color = TextSecondary,
+        fontSize = 14.sp
+    )
+
+    Spacer(modifier = Modifier.height(24.dp))
+
+    if (!hasPermission) {
+        Text(
+            "Allow MiniPlayer to access your music files.",
+            color = TextSecondary,
+            fontSize = 14.sp
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(
+            onClick = onRequestPermission,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Accent
+            )
+        ) {
+            Text("Grant Permission", color = Background)
+        }
+    } else if (loading) {
+        CircularProgressIndicator(color = Accent)
+    } else if (songs.isEmpty()) {
+        Text(
+            "No music files found on your device.",
+            color = TextSecondary
+        )
+    } else {
+        songs.forEach { song ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(SurfaceDark)
+                    .clickable {
+                        onSongSelected(song)
+                    }
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(
+                                    Color(0xFF563C91),
+                                    Color(0xFFB65F83)
+                                )
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("♫", color = Color.White, fontSize = 22.sp)
+                }
+
+                Spacer(modifier = Modifier.width(14.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        song.title,
+                        color = TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 15.sp
+                    )
+
+                    Text(
+                        song.artist,
+                        color = TextSecondary,
+                        fontSize = 12.sp
+                    )
+                }
+
+                Text(
+                    formatDuration(song.duration),
+                    color = TextSecondary,
+                    fontSize = 12.sp
+                )
+            }
+        }
+    }
+}
+
+private fun formatDuration(duration: Long): String {
+    val totalSeconds = duration / 1000
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return "%d:%02d".format(minutes, seconds)
 }
