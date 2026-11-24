@@ -1,3 +1,4 @@
+
 name: Build MiniPlayer APK
 
 on:
@@ -35,6 +36,9 @@ jobs:
 
       - name: Build Debug APK
         run: ./gradlew --no-daemon assembleDebug --stacktrace
+        env:
+          GRADLE_OPTS: "-Xmx3g -XX:MaxMetaspaceSize=1g"
+          JAVA_TOOL_OPTIONS: "-Xmx3g -XX:MaxMetaspaceSize=1g"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
