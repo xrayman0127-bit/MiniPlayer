@@ -2,15 +2,19 @@
 package com.musab.miniplayer
 
 import android.Manifest
+import android.content.ContentUris
 import android.content.pm.PackageManager
 import android.database.Cursor
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -20,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -31,8 +36,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+
 import androidx.core.content.ContextCompat
+
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 private val Background = Color(0xFF101016)
@@ -45,7 +57,8 @@ data class Song(
     val id: Long,
     val title: String,
     val artist: String,
-    val duration: Long
+    val duration: Long,
+    val uri: Uri
 )
 
 class MainActivity : ComponentActivity() {
@@ -67,8 +80,11 @@ private fun audioPermission(): String {
 
 private suspend fun loadSongs(): List<Song> =
     withContext(Dispatchers.IO) {
+
         val songs = mutableListOf<Song>()
-        val context = AppContextHolder.context ?: return@withContext songs
+
+        val context = AppContextHolder.context
+            ?: return@withContext songs
 
         val collection =
             MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
@@ -95,22 +111,35 @@ private suspend fun loadSongs(): List<Song> =
         )
 
         cursor?.use {
+
             val idColumn =
                 it.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+
             val titleColumn =
                 it.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
+
             val artistColumn =
                 it.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
+
             val durationColumn =
                 it.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
 
             while (it.moveToNext()) {
+
+                val songId = it.getLong(idColumn)
+
                 songs.add(
                     Song(
-                        id = it.getLong(idColumn),
-                        title = it.getString(titleColumn) ?: "Unknown Track",
-                        artist = it.getString(artistColumn) ?: "Unknown Artist",
-                        duration = it.getLong(durationColumn)
+                        id = songId,
+                        title = it.getString(titleColumn)
+                            ?: "Unknown Track",
+                        artist = it.getString(artistColumn)
+                            ?: "Unknown Artist",
+                        duration = it.getLong(durationColumn),
+                        uri = ContentUris.withAppendedId(
+                            collection,
+                            songId
+                        )
                     )
                 )
             }
@@ -126,20 +155,45 @@ private object AppContextHolder {
 
 @Composable
 fun MiniPlayerApp() {
+
     val context = LocalContext.current
 
-    var isPlaying by remember { mutableStateOf(false) }
-    var isFavorite by remember { mutableStateOf(false) }
-    var progress by remember { mutableFloatStateOf(0.35f) }
+    var isPlaying by remember {
+        mutableStateOf(false)
+    }
+
+    var isFavorite by remember {
+        mutableStateOf(false)
+    }
+
+    var progress by remember {
+        mutableFloatStateOf(0f)
+    }
+
+    var currentPosition by remember {
+        mutableLongStateOf(0L)
+    }
 
     var selectedSong by remember {
         mutableStateOf(
-            Song(0, "Your First Track", "Unknown Artist", 238000)
+            Song(
+                0,
+                "Your First Track",
+                "Unknown Artist",
+                238000,
+                Uri.EMPTY
+            )
         )
     }
 
-    var currentTab by remember { mutableStateOf("player") }
-    var songs by remember { mutableStateOf<List<Song>>(emptyList()) }
+    var currentTab by remember {
+        mutableStateOf("player")
+    }
+
+    var songs by remember {
+        mutableStateOf<List<Song>>(emptyList())
+    }
+
     var hasPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -149,10 +203,49 @@ fun MiniPlayerApp() {
         )
     }
 
-    var loading by remember { mutableStateOf(false) }
+    var loading by remember {
+        mutableStateOf(false)
+    }
 
     AppContextHolder.context = context.applicationContext
 
+    // إنشاء مشغل الصوت
+    val player = remember(context) {
+        ExoPlayer.Builder(context).build()
+    }
+
+    // مراقبة حالة المشغل وتحرير موارده
+    DisposableEffect(player) {
+
+        val listener = object : Player.Listener {
+
+            override fun onIsPlayingChanged(
+                isPlayingNow: Boolean
+            ) {
+                isPlaying = isPlayingNow
+            }
+
+            override fun onPlaybackStateChanged(
+                playbackState: Int
+            ) {
+                if (playbackState == Player.STATE_ENDED) {
+                    isPlaying = false
+                    progress = 0f
+                    currentPosition = 0L
+                    player.seekTo(0)
+                }
+            }
+        }
+
+        player.addListener(listener)
+
+        onDispose {
+            player.removeListener(listener)
+            player.release()
+        }
+    }
+
+    // طلب صلاحية الوصول إلى الموسيقى
     val permissionLauncher =
         rememberLauncherForActivityResult(
             ActivityResultContracts.RequestPermission()
@@ -160,7 +253,9 @@ fun MiniPlayerApp() {
             hasPermission = granted
         }
 
+    // تحميل الأغاني
     LaunchedEffect(hasPermission) {
+
         if (hasPermission) {
             loading = true
             songs = loadSongs()
@@ -168,17 +263,41 @@ fun MiniPlayerApp() {
         }
     }
 
+    // تحديث الوقت وشريط التقدم
+    LaunchedEffect(isPlaying, selectedSong.id) {
+
+        while (isPlaying) {
+
+            val duration = player.duration
+
+            if (duration > 0) {
+
+                currentPosition = player.currentPosition
+
+                progress = (
+                    currentPosition.toFloat() /
+                    duration.toFloat()
+                ).coerceIn(0f, 1f)
+            }
+
+            delay(500)
+        }
+    }
+
     MaterialTheme {
+
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = Background
         ) {
+
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 24.dp)
             ) {
+
                 Spacer(modifier = Modifier.height(24.dp))
 
                 Row(
@@ -186,6 +305,7 @@ fun MiniPlayerApp() {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+
                     Text(
                         "MINIPLAYER",
                         color = TextPrimary,
@@ -204,33 +324,78 @@ fun MiniPlayerApp() {
                 Spacer(modifier = Modifier.height(28.dp))
 
                 if (currentTab == "player") {
+
                     PlayerScreen(
                         song = selectedSong,
                         isPlaying = isPlaying,
                         isFavorite = isFavorite,
                         progress = progress,
+                        currentPosition = currentPosition,
+
                         onFavorite = {
                             isFavorite = !isFavorite
                         },
+
                         onPlay = {
-                            isPlaying = !isPlaying
+
+                            if (selectedSong.uri != Uri.EMPTY) {
+
+                                if (player.isPlaying) {
+                                    player.pause()
+                                } else {
+                                    if (
+                                        player.playbackState ==
+                                        Player.STATE_ENDED
+                                    ) {
+                                        player.seekTo(0)
+                                    }
+
+                                    player.play()
+                                }
+                            }
                         },
-                        onProgress = {
-                            progress = it
+
+                        onProgress = { value ->
+
+                            progress = value
+
+                            val duration = player.duration
+
+                            if (duration > 0) {
+                                player.seekTo(
+                                    (duration * value).toLong()
+                                )
+                            }
                         }
                     )
+
                 } else {
+
                     LibraryScreen(
                         songs = songs,
                         loading = loading,
                         hasPermission = hasPermission,
+
                         onRequestPermission = {
-                            permissionLauncher.launch(audioPermission())
+                            permissionLauncher.launch(
+                                audioPermission()
+                            )
                         },
+
                         onSongSelected = { song ->
+
                             selectedSong = song
+
                             progress = 0f
-                            isPlaying = false
+                            currentPosition = 0L
+
+                            player.setMediaItem(
+                                MediaItem.fromUri(song.uri)
+                            )
+
+                            player.prepare()
+                            player.play()
+
                             currentTab = "player"
                         }
                     )
@@ -244,12 +409,16 @@ fun MiniPlayerApp() {
                         .clip(RoundedCornerShape(20.dp))
                         .background(SurfaceDark)
                         .padding(vertical = 17.dp),
+
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+
                     Text(
                         "☷",
-                        color = if (currentTab == "library") Accent else TextSecondary,
+                        color = if (
+                            currentTab == "library"
+                        ) Accent else TextSecondary,
                         fontSize = 23.sp,
                         modifier = Modifier.clickable {
                             currentTab = "library"
@@ -258,7 +427,9 @@ fun MiniPlayerApp() {
 
                     Text(
                         "♫",
-                        color = if (currentTab == "player") Accent else TextSecondary,
+                        color = if (
+                            currentTab == "player"
+                        ) Accent else TextSecondary,
                         fontSize = 23.sp,
                         modifier = Modifier.clickable {
                             currentTab = "player"
@@ -284,10 +455,12 @@ fun PlayerScreen(
     isPlaying: Boolean,
     isFavorite: Boolean,
     progress: Float,
+    currentPosition: Long,
     onFavorite: () -> Unit,
     onPlay: () -> Unit,
     onProgress: (Float) -> Unit
 ) {
+
     Text(
         "NOW PLAYING",
         color = TextSecondary,
@@ -313,6 +486,7 @@ fun PlayerScreen(
             ),
         contentAlignment = Alignment.Center
     ) {
+
         Box(
             modifier = Modifier
                 .size(230.dp)
@@ -327,6 +501,7 @@ fun PlayerScreen(
                 ),
             contentAlignment = Alignment.Center
         ) {
+
             Box(
                 modifier = Modifier
                     .size(150.dp)
@@ -352,8 +527,14 @@ fun PlayerScreen(
 
     Spacer(modifier = Modifier.height(28.dp))
 
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Column(modifier = Modifier.weight(1f)) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+
+        Column(
+            modifier = Modifier.weight(1f)
+        ) {
+
             Text(
                 song.title,
                 color = TextPrimary,
@@ -383,7 +564,7 @@ fun PlayerScreen(
     Spacer(modifier = Modifier.height(25.dp))
 
     Slider(
-        value = progress,
+        value = progress.coerceIn(0f, 1f),
         onValueChange = onProgress,
         modifier = Modifier.fillMaxWidth(),
         colors = SliderDefaults.colors(
@@ -397,7 +578,13 @@ fun PlayerScreen(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Text("0:00", color = TextSecondary, fontSize = 12.sp)
+
+        Text(
+            formatDuration(currentPosition),
+            color = TextSecondary,
+            fontSize = 12.sp
+        )
+
         Text(
             formatDuration(song.duration),
             color = TextSecondary,
@@ -412,8 +599,18 @@ fun PlayerScreen(
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text("↻", color = TextSecondary, fontSize = 25.sp)
-        Text("◀", color = TextPrimary, fontSize = 27.sp)
+
+        Text(
+            "↻",
+            color = TextSecondary,
+            fontSize = 25.sp
+        )
+
+        Text(
+            "◀",
+            color = TextPrimary,
+            fontSize = 27.sp
+        )
 
         Box(
             modifier = Modifier
@@ -427,9 +624,12 @@ fun PlayerScreen(
                         )
                     )
                 )
-                .clickable { onPlay() },
+                .clickable {
+                    onPlay()
+                },
             contentAlignment = Alignment.Center
         ) {
+
             Text(
                 if (isPlaying) "Ⅱ" else "▶",
                 color = Color.White,
@@ -437,11 +637,19 @@ fun PlayerScreen(
             )
         }
 
-        Text("▶", color = TextPrimary, fontSize = 27.sp)
-        Text("⇄", color = TextSecondary, fontSize = 24.sp)
+        Text(
+            "▶",
+            color = TextPrimary,
+            fontSize = 27.sp
+        )
+
+        Text(
+            "⇄",
+            color = TextSecondary,
+            fontSize = 24.sp
+        )
     }
 }
-
 
 @Composable
 fun LibraryScreen(
@@ -451,7 +659,9 @@ fun LibraryScreen(
     onRequestPermission: () -> Unit,
     onSongSelected: (Song) -> Unit
 ) {
+
     Column {
+
         Text(
             "MUSIC LIBRARY",
             color = TextPrimary,
@@ -470,7 +680,9 @@ fun LibraryScreen(
         Spacer(modifier = Modifier.height(24.dp))
 
         when {
+
             !hasPermission -> {
+
                 Text(
                     "Allow MiniPlayer to access your music files.",
                     color = TextSecondary,
@@ -485,15 +697,23 @@ fun LibraryScreen(
                         containerColor = Accent
                     )
                 ) {
-                    Text("Grant Permission", color = Background)
+
+                    Text(
+                        "Grant Permission",
+                        color = Background
+                    )
                 }
             }
 
             loading -> {
-                CircularProgressIndicator(color = Accent)
+
+                CircularProgressIndicator(
+                    color = Accent
+                )
             }
 
             songs.isEmpty() -> {
+
                 Text(
                     "No music files found on your device.",
                     color = TextSecondary
@@ -501,16 +721,20 @@ fun LibraryScreen(
             }
 
             else -> {
+
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 600.dp),
+
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+
                     items(
                         items = songs,
                         key = { song -> song.id }
                     ) { song ->
+
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -520,8 +744,10 @@ fun LibraryScreen(
                                     onSongSelected(song)
                                 }
                                 .padding(16.dp),
+
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+
                             Box(
                                 modifier = Modifier
                                     .size(48.dp)
@@ -534,8 +760,10 @@ fun LibraryScreen(
                                             )
                                         )
                                     ),
+
                                 contentAlignment = Alignment.Center
                             ) {
+
                                 Text(
                                     "♫",
                                     color = Color.White,
@@ -543,11 +771,14 @@ fun LibraryScreen(
                                 )
                             }
 
-                            Spacer(modifier = Modifier.width(14.dp))
+                            Spacer(
+                                modifier = Modifier.width(14.dp)
+                            )
 
                             Column(
                                 modifier = Modifier.weight(1f)
                             ) {
+
                                 Text(
                                     song.title,
                                     color = TextPrimary,
@@ -574,9 +805,12 @@ fun LibraryScreen(
         }
     }
 }
+
 private fun formatDuration(duration: Long): String {
+
     val totalSeconds = duration / 1000
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60
+
     return "%d:%02d".format(minutes, seconds)
 }
