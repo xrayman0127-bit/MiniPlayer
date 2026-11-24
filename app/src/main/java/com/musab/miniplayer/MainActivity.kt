@@ -18,6 +18,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -440,6 +442,7 @@ fun PlayerScreen(
     }
 }
 
+
 @Composable
 fun LibraryScreen(
     songs: List<Song>,
@@ -448,105 +451,129 @@ fun LibraryScreen(
     onRequestPermission: () -> Unit,
     onSongSelected: (Song) -> Unit
 ) {
-    Text(
-        "MUSIC LIBRARY",
-        color = TextPrimary,
-        fontSize = 21.sp,
-        fontWeight = FontWeight.Bold
-    )
-
-    Spacer(modifier = Modifier.height(8.dp))
-
-    Text(
-        "${songs.size} songs",
-        color = TextSecondary,
-        fontSize = 14.sp
-    )
-
-    Spacer(modifier = Modifier.height(24.dp))
-
-    if (!hasPermission) {
+    Column {
         Text(
-            "Allow MiniPlayer to access your music files.",
+            "MUSIC LIBRARY",
+            color = TextPrimary,
+            fontSize = 21.sp,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            "${songs.size} songs",
             color = TextSecondary,
             fontSize = 14.sp
         )
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(24.dp))
 
-        Button(
-            onClick = onRequestPermission,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Accent
-            )
-        ) {
-            Text("Grant Permission", color = Background)
-        }
-    } else if (loading) {
-        CircularProgressIndicator(color = Accent)
-    } else if (songs.isEmpty()) {
-        Text(
-            "No music files found on your device.",
-            color = TextSecondary
-        )
-    } else {
-        songs.forEach { song ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(SurfaceDark)
-                    .clickable {
-                        onSongSelected(song)
-                    }
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(
-                            Brush.linearGradient(
-                                listOf(
-                                    Color(0xFF563C91),
-                                    Color(0xFFB65F83)
-                                )
-                            )
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("♫", color = Color.White, fontSize = 22.sp)
-                }
-
-                Spacer(modifier = Modifier.width(14.dp))
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        song.title,
-                        color = TextPrimary,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 15.sp
-                    )
-
-                    Text(
-                        song.artist,
-                        color = TextSecondary,
-                        fontSize = 12.sp
-                    )
-                }
-
+        when {
+            !hasPermission -> {
                 Text(
-                    formatDuration(song.duration),
+                    "Allow MiniPlayer to access your music files.",
                     color = TextSecondary,
-                    fontSize = 12.sp
+                    fontSize = 14.sp
                 )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Button(
+                    onClick = onRequestPermission,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Accent
+                    )
+                ) {
+                    Text("Grant Permission", color = Background)
+                }
+            }
+
+            loading -> {
+                CircularProgressIndicator(color = Accent)
+            }
+
+            songs.isEmpty() -> {
+                Text(
+                    "No music files found on your device.",
+                    color = TextSecondary
+                )
+            }
+
+            else -> {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 600.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(
+                        items = songs,
+                        key = { song -> song.id }
+                    ) { song ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(SurfaceDark)
+                                .clickable {
+                                    onSongSelected(song)
+                                }
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(
+                                        Brush.linearGradient(
+                                            listOf(
+                                                Color(0xFF563C91),
+                                                Color(0xFFB65F83)
+                                            )
+                                        )
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "♫",
+                                    color = Color.White,
+                                    fontSize = 22.sp
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(14.dp))
+
+                            Column(
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    song.title,
+                                    color = TextPrimary,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 15.sp
+                                )
+
+                                Text(
+                                    song.artist,
+                                    color = TextSecondary,
+                                    fontSize = 12.sp
+                                )
+                            }
+
+                            Text(
+                                formatDuration(song.duration),
+                                color = TextSecondary,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
             }
         }
     }
 }
-
 private fun formatDuration(duration: Long): String {
     val totalSeconds = duration / 1000
     val minutes = totalSeconds / 60
