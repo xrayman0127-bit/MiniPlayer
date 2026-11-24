@@ -5,6 +5,8 @@ import android.Manifest
 import android.content.ContentUris
 import android.content.pm.PackageManager
 import android.database.Cursor
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -15,6 +17,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.foundation.layout.requiredWidth
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -27,11 +34,13 @@ import androidx.compose.foundation.lazy.items
 
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -44,8 +53,8 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 
 private val Background = Color(0xFF101016)
 private val SurfaceDark = Color(0xFF1D1C27)
@@ -58,8 +67,66 @@ data class Song(
     val title: String,
     val artist: String,
     val duration: Long,
-    val uri: Uri
+    val uri: Uri,
+    val albumId: Long
 )
+
+@Composable
+private fun rememberAlbumArtwork(song: Song): Bitmap? {
+    val context = LocalContext.current
+
+    val bitmap by produceState<Bitmap?>(
+        initialValue = null,
+        key1 = song.albumId
+    ) {
+        value = withContext(Dispatchers.IO) {
+            if (song.albumId <= 0L) {
+                null
+            } else {
+                runCatching {
+                    val artworkUri = ContentUris.withAppendedId(
+                        Uri.parse("content://media/external/audio/albumart"),
+                        song.albumId
+                    )
+
+                    context.contentResolver.openInputStream(artworkUri)?.use {
+                        BitmapFactory.decodeStream(it)
+                    }
+                }.getOrNull()
+            }
+        }
+    }
+
+    return bitmap
+}
+
+@Composable
+private fun AlbumArtwork(bitmap: Bitmap?) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(1f)
+            .clip(RoundedCornerShape(28.dp))
+            .background(Color(0xFF563C91)),
+        contentAlignment = Alignment.Center
+    ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "Album artwork",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Text(
+                "M",
+                color = Color.White.copy(alpha = 0.8f),
+                fontSize = 52.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -93,7 +160,8 @@ private suspend fun loadSongs(): List<Song> =
             MediaStore.Audio.Media._ID,
             MediaStore.Audio.Media.TITLE,
             MediaStore.Audio.Media.ARTIST,
-            MediaStore.Audio.Media.DURATION
+            MediaStore.Audio.Media.DURATION,
+            MediaStore.Audio.Media.ALBUM_ID
         )
 
         val selection =
@@ -124,6 +192,9 @@ private suspend fun loadSongs(): List<Song> =
             val durationColumn =
                 it.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
 
+            val albumIdColumn =
+                it.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
+
             while (it.moveToNext()) {
 
                 val songId = it.getLong(idColumn)
@@ -139,7 +210,8 @@ private suspend fun loadSongs(): List<Song> =
                         uri = ContentUris.withAppendedId(
                             collection,
                             songId
-                        )
+                        ),
+                        albumId = it.getLong(albumIdColumn)
                     )
                 )
             }
@@ -181,7 +253,8 @@ fun MiniPlayerApp() {
                 "Your First Track",
                 "Unknown Artist",
                 238000,
-                Uri.EMPTY
+                Uri.EMPTY,
+                0L
             )
         )
     }
@@ -538,198 +611,177 @@ fun PlayerScreen(
     onPlay: () -> Unit,
     onProgress: (Float) -> Unit
 ) {
+    val bitmap = rememberAlbumArtwork(song)
 
-    Text(
-        "NOW PLAYING",
-        color = TextSecondary,
-        fontSize = 11.sp,
-        letterSpacing = 3.sp
-    )
-
-    Spacer(modifier = Modifier.height(18.dp))
+    val artworkColors = remember(bitmap) {
+        if (bitmap == null) {
+            listOf(
+                Color(0xFF563C91),
+                Color(0xFF8A527F)
+            )
+        } else {
+            listOf(
+                Color(bitmap.getPixel(bitmap.width / 4, bitmap.height / 4)),
+                Color(bitmap.getPixel(bitmap.width / 2, bitmap.height / 2)),
+                Color(bitmap.getPixel(bitmap.width * 3 / 4, bitmap.height * 3 / 4))
+            )
+        }
+    }
 
     Box(
         modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(1f)
-            .clip(RoundedCornerShape(28.dp))
+            .requiredWidth(LocalConfiguration.current.screenWidthDp.dp)
+            .offset(x = (-24).dp)
+            .heightIn(
+                min = (LocalConfiguration.current.screenHeightDp - 120).dp
+            )
             .background(
-                Brush.linearGradient(
-                    listOf(
-                        Color(0xFF563C91),
-                        Color(0xFFB65F83),
-                        Color(0xFFEFAD78)
+                Brush.verticalGradient(
+                    colors = listOf(
+                        artworkColors[0],
+                        artworkColors[1].copy(alpha = 0.75f),
+                        Background
                     )
                 )
-            ),
-        contentAlignment = Alignment.Center
+            )
+            .padding(horizontal = 24.dp, vertical = 12.dp)
     ) {
-
-        Box(
-            modifier = Modifier
-                .size(230.dp)
-                .clip(CircleShape)
-                .background(
-                    Brush.linearGradient(
-                        listOf(
-                            Color(0xFF30204F),
-                            Color(0xFF171522)
-                        )
-                    )
-                ),
-            contentAlignment = Alignment.Center
+        Column(
+            modifier = Modifier.fillMaxWidth()
         ) {
+            Text(
+                "NOW PLAYING",
+                color = Color.White.copy(alpha = 0.75f),
+                fontSize = 11.sp,
+                letterSpacing = 3.sp
+            )
 
-            Box(
-                modifier = Modifier
-                    .size(150.dp)
-                    .clip(CircleShape)
-                    .background(
-                        Brush.linearGradient(
-                            listOf(
-                                Color(0xFFE9A1B5),
-                                Color(0xFF7953A7)
+            Spacer(modifier = Modifier.height(18.dp))
+
+            AlbumArtwork(bitmap)
+
+            Spacer(modifier = Modifier.height(28.dp))
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        song.title,
+                        color = TextPrimary,
+                        fontSize = 23.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Text(
+                        song.artist,
+                        color = TextSecondary,
+                        fontSize = 15.sp
+                    )
+                }
+
+                Text(
+                    if (isFavorite) "♥" else "♡",
+                    color = Accent,
+                    fontSize = 30.sp,
+                    modifier = Modifier.clickable {
+                        onFavorite()
+                    }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(25.dp))
+
+            Slider(
+                value = progress.coerceIn(0f, 1f),
+                onValueChange = onProgress,
+                modifier = Modifier.fillMaxWidth(),
+                colors = SliderDefaults.colors(
+                    thumbColor = Accent,
+                    activeTrackColor = Accent,
+                    inactiveTrackColor = SurfaceDark
+                )
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    formatDuration(currentPosition),
+                    color = TextSecondary,
+                    fontSize = 12.sp
+                )
+
+                Text(
+                    formatDuration(song.duration),
+                    color = TextSecondary,
+                    fontSize = 12.sp
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    if (repeatMode == Player.REPEAT_MODE_ONE) "↻¹" else "↻",
+                    color = if (repeatMode == Player.REPEAT_MODE_OFF) TextSecondary else Accent,
+                    fontSize = 25.sp,
+                    modifier = Modifier.clickable { onRepeat() }
+                )
+
+                Text(
+                    "◀",
+                    color = TextPrimary,
+                    fontSize = 27.sp,
+                    modifier = Modifier.clickable { onPrevious() }
+                )
+
+                Box(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.linearGradient(
+                                listOf(
+                                    Color(0xFFC6A9FF),
+                                    Color(0xFF8E72D9)
+                                )
                             )
                         )
+                        .clickable { onPlay() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        if (isPlaying) "Ⅱ" else "▶",
+                        color = Color.White,
+                        fontSize = 30.sp
                     )
-            )
-        }
+                }
 
-        Text(
-            "M",
-            color = Color.White.copy(alpha = 0.8f),
-            fontSize = 42.sp,
-            fontWeight = FontWeight.Bold
-        )
-    }
-
-    Spacer(modifier = Modifier.height(28.dp))
-
-    Row(
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-
-        Column(
-            modifier = Modifier.weight(1f)
-        ) {
-
-            Text(
-                song.title,
-                color = TextPrimary,
-                fontSize = 23.sp,
-                fontWeight = FontWeight.Bold
-            )
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            Text(
-                song.artist,
-                color = TextSecondary,
-                fontSize = 15.sp
-            )
-        }
-
-        Text(
-            if (isFavorite) "♥" else "♡",
-            color = Accent,
-            fontSize = 30.sp,
-            modifier = Modifier.clickable {
-                onFavorite()
-            }
-        )
-    }
-
-    Spacer(modifier = Modifier.height(25.dp))
-
-    Slider(
-        value = progress.coerceIn(0f, 1f),
-        onValueChange = onProgress,
-        modifier = Modifier.fillMaxWidth(),
-        colors = SliderDefaults.colors(
-            thumbColor = Accent,
-            activeTrackColor = Accent,
-            inactiveTrackColor = SurfaceDark
-        )
-    )
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-
-        Text(
-            formatDuration(currentPosition),
-            color = TextSecondary,
-            fontSize = 12.sp
-        )
-
-        Text(
-            formatDuration(song.duration),
-            color = TextSecondary,
-            fontSize = 12.sp
-        )
-    }
-
-    Spacer(modifier = Modifier.height(24.dp))
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-
-        Text(
-            if (repeatMode == Player.REPEAT_MODE_ONE) "↻¹" else "↻",
-            color = if (repeatMode == Player.REPEAT_MODE_OFF) TextSecondary else Accent,
-            fontSize = 25.sp,
-            modifier = Modifier.clickable { onRepeat() }
-        )
-
-        Text(
-            "◀",
-            color = TextPrimary,
-            fontSize = 27.sp,
-            modifier = Modifier.clickable { onPrevious() }
-        )
-
-        Box(
-            modifier = Modifier
-                .size(72.dp)
-                .clip(CircleShape)
-                .background(
-                    Brush.linearGradient(
-                        listOf(
-                            Color(0xFFC6A9FF),
-                            Color(0xFF8E72D9)
-                        )
-                    )
+                Text(
+                    "▶",
+                    color = TextPrimary,
+                    fontSize = 27.sp,
+                    modifier = Modifier.clickable { onNext() }
                 )
-                .clickable {
-                    onPlay()
-                },
-            contentAlignment = Alignment.Center
-        ) {
 
-            Text(
-                if (isPlaying) "Ⅱ" else "▶",
-                color = Color.White,
-                fontSize = 30.sp
-            )
+                Text(
+                    "⇄",
+                    color = if (isShuffleEnabled) Accent else TextSecondary,
+                    fontSize = 24.sp,
+                    modifier = Modifier.clickable { onShuffle() }
+                )
+            }
         }
-
-        Text(
-            "▶",
-            color = TextPrimary,
-            fontSize = 27.sp,
-            modifier = Modifier.clickable { onNext() }
-        )
-
-        Text(
-            "⇄",
-            color = if (isShuffleEnabled) Accent else TextSecondary,
-            fontSize = 24.sp,
-            modifier = Modifier.clickable { onShuffle() }
-        )
     }
 }
 
