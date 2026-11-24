@@ -194,6 +194,16 @@ fun MiniPlayerApp() {
         mutableStateOf<List<Song>>(emptyList())
     }
 
+    var isShuffleEnabled by remember {
+        mutableStateOf(false)
+    }
+
+    var repeatMode by remember {
+        mutableIntStateOf(Player.REPEAT_MODE_OFF)
+    }
+
+    val latestSongs by rememberUpdatedState(songs)
+
     var hasPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -232,8 +242,31 @@ fun MiniPlayerApp() {
                     isPlaying = false
                     progress = 0f
                     currentPosition = 0L
-                    player.seekTo(0)
                 }
+            }
+
+            override fun onMediaItemTransition(
+                mediaItem: MediaItem?,
+                reason: Int
+            ) {
+                val song = latestSongs.getOrNull(player.currentMediaItemIndex)
+                if (song != null) {
+                    selectedSong = song
+                    progress = 0f
+                    currentPosition = 0L
+                }
+            }
+
+            override fun onShuffleModeEnabledChanged(
+                shuffleModeEnabled: Boolean
+            ) {
+                isShuffleEnabled = shuffleModeEnabled
+            }
+
+            override fun onRepeatModeChanged(
+                newRepeatMode: Int
+            ) {
+                repeatMode = newRepeatMode
             }
         }
 
@@ -284,6 +317,50 @@ fun MiniPlayerApp() {
         }
     }
 
+    // وظائف قائمة التشغيل والتحكم
+    fun playSong(song: Song) {
+        val songIndex = songs.indexOfFirst { it.id == song.id }
+        if (songIndex < 0) return
+
+        val mediaItems = songs.map { songItem ->
+            MediaItem.fromUri(songItem.uri)
+        }
+
+        player.setMediaItems(mediaItems, songIndex, 0L)
+        player.shuffleModeEnabled = isShuffleEnabled
+        player.repeatMode = repeatMode
+        player.prepare()
+        player.play()
+
+        selectedSong = song
+        progress = 0f
+        currentPosition = 0L
+    }
+
+    fun previousSong() {
+        if (player.mediaItemCount > 0) {
+            player.seekToPreviousMediaItem()
+        }
+    }
+
+    fun nextSong() {
+        if (player.mediaItemCount > 0) {
+            player.seekToNextMediaItem()
+        }
+    }
+
+    fun toggleShuffle() {
+        player.shuffleModeEnabled = !player.shuffleModeEnabled
+    }
+
+    fun cycleRepeat() {
+        player.repeatMode = when (player.repeatMode) {
+            Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
+            Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
+            else -> Player.REPEAT_MODE_OFF
+        }
+    }
+
     MaterialTheme {
 
         Surface(
@@ -331,6 +408,12 @@ fun MiniPlayerApp() {
                         isFavorite = isFavorite,
                         progress = progress,
                         currentPosition = currentPosition,
+                        isShuffleEnabled = isShuffleEnabled,
+                        repeatMode = repeatMode,
+                        onPrevious = { previousSong() },
+                        onNext = { nextSong() },
+                        onShuffle = { toggleShuffle() },
+                        onRepeat = { cycleRepeat() },
 
                         onFavorite = {
                             isFavorite = !isFavorite
@@ -373,6 +456,7 @@ fun MiniPlayerApp() {
 
                     LibraryScreen(
                         songs = songs,
+                        selectedSongId = selectedSong.id,
                         loading = loading,
                         hasPermission = hasPermission,
 
@@ -383,19 +467,7 @@ fun MiniPlayerApp() {
                         },
 
                         onSongSelected = { song ->
-
-                            selectedSong = song
-
-                            progress = 0f
-                            currentPosition = 0L
-
-                            player.setMediaItem(
-                                MediaItem.fromUri(song.uri)
-                            )
-
-                            player.prepare()
-                            player.play()
-
+                            playSong(song)
                             currentTab = "player"
                         }
                     )
@@ -456,6 +528,12 @@ fun PlayerScreen(
     isFavorite: Boolean,
     progress: Float,
     currentPosition: Long,
+    isShuffleEnabled: Boolean,
+    repeatMode: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onShuffle: () -> Unit,
+    onRepeat: () -> Unit,
     onFavorite: () -> Unit,
     onPlay: () -> Unit,
     onProgress: (Float) -> Unit
@@ -601,15 +679,17 @@ fun PlayerScreen(
     ) {
 
         Text(
-            "↻",
-            color = TextSecondary,
-            fontSize = 25.sp
+            if (repeatMode == Player.REPEAT_MODE_ONE) "↻¹" else "↻",
+            color = if (repeatMode == Player.REPEAT_MODE_OFF) TextSecondary else Accent,
+            fontSize = 25.sp,
+            modifier = Modifier.clickable { onRepeat() }
         )
 
         Text(
             "◀",
             color = TextPrimary,
-            fontSize = 27.sp
+            fontSize = 27.sp,
+            modifier = Modifier.clickable { onPrevious() }
         )
 
         Box(
@@ -640,13 +720,15 @@ fun PlayerScreen(
         Text(
             "▶",
             color = TextPrimary,
-            fontSize = 27.sp
+            fontSize = 27.sp,
+            modifier = Modifier.clickable { onNext() }
         )
 
         Text(
             "⇄",
-            color = TextSecondary,
-            fontSize = 24.sp
+            color = if (isShuffleEnabled) Accent else TextSecondary,
+            fontSize = 24.sp,
+            modifier = Modifier.clickable { onShuffle() }
         )
     }
 }
@@ -654,6 +736,7 @@ fun PlayerScreen(
 @Composable
 fun LibraryScreen(
     songs: List<Song>,
+    selectedSongId: Long,
     loading: Boolean,
     hasPermission: Boolean,
     onRequestPermission: () -> Unit,
@@ -739,7 +822,11 @@ fun LibraryScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(16.dp))
-                                .background(SurfaceDark)
+                                .background(
+                                    if (song.id == selectedSongId)
+                                        Accent.copy(alpha = 0.18f)
+                                    else SurfaceDark
+                                )
                                 .clickable {
                                     onSongSelected(song)
                                 }
