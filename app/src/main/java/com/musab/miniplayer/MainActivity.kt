@@ -18,8 +18,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.foundation.layout.requiredWidth
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -630,8 +628,7 @@ fun PlayerScreen(
 
     Box(
         modifier = Modifier
-            .requiredWidth(LocalConfiguration.current.screenWidthDp.dp)
-            .offset(x = (-24).dp)
+            .fillMaxWidth()
             .heightIn(
                 min = (LocalConfiguration.current.screenHeightDp - 120).dp
             )
