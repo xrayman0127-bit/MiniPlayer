@@ -20,6 +20,15 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.Image
+import kotlin.math.sin
+import kotlin.math.abs
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -442,7 +451,6 @@ fun MiniPlayerApp() {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = 24.dp)
             ) {
 
@@ -470,6 +478,13 @@ fun MiniPlayerApp() {
                 }
 
                 Spacer(modifier = Modifier.height(28.dp))
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                ) {
 
                 if (currentTab == "player") {
 
@@ -543,8 +558,9 @@ fun MiniPlayerApp() {
                         }
                     )
                 }
+                }
 
-                Spacer(modifier = Modifier.height(32.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 Row(
                     modifier = Modifier
@@ -592,6 +608,58 @@ fun MiniPlayerApp() {
     }
 }
 
+
+@Composable
+private fun WaveformProgress(
+    progress: Float,
+    onProgress: (Float) -> Unit
+) {
+    val currentOnProgress by rememberUpdatedState(onProgress)
+
+    Canvas(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(44.dp)
+            .pointerInput(Unit) {
+                detectTapGestures { position ->
+                    currentOnProgress(
+                        (position.x / size.width).coerceIn(0f, 1f)
+                    )
+                }
+            }
+            .pointerInput(Unit) {
+                detectDragGestures { change, _ ->
+                    change.consume()
+                    currentOnProgress(
+                        (change.position.x / size.width).coerceIn(0f, 1f)
+                    )
+                }
+            }
+    ) {
+        val count = 64
+        val gap = 2.dp.toPx()
+        val barWidth = (size.width - gap * (count - 1)) / count
+        val centerY = size.height / 2
+        val played = progress.coerceIn(0f, 1f)
+
+        for (i in 0 until count) {
+            val heightFactor =
+                0.22f + abs(sin(i * 0.47)).toFloat() * 0.78f
+
+            val barHeight = size.height * heightFactor
+            val x = i * (barWidth + gap)
+            val barCenter = (x + barWidth / 2) / size.width
+
+            drawRoundRect(
+                color = if (barCenter <= played) Accent else SurfaceDark,
+                topLeft = Offset(x, centerY - barHeight / 2),
+                size = Size(barWidth, barHeight),
+                cornerRadius = CornerRadius(barWidth / 2)
+            )
+        }
+    }
+}
+
 @Composable
 fun PlayerScreen(
     song: Song,
@@ -629,9 +697,6 @@ fun PlayerScreen(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(
-                min = (LocalConfiguration.current.screenHeightDp - 120).dp
-            )
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
@@ -693,15 +758,9 @@ fun PlayerScreen(
 
             Spacer(modifier = Modifier.height(25.dp))
 
-            Slider(
-                value = progress.coerceIn(0f, 1f),
-                onValueChange = onProgress,
-                modifier = Modifier.fillMaxWidth(),
-                colors = SliderDefaults.colors(
-                    thumbColor = Accent,
-                    activeTrackColor = Accent,
-                    inactiveTrackColor = SurfaceDark
-                )
+            WaveformProgress(
+                progress = progress,
+                onProgress = onProgress
             )
 
             Row(
