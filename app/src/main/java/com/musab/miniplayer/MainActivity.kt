@@ -269,6 +269,33 @@ fun MiniPlayerApp() {
         )
     }
 
+    val artworkBitmap = rememberAlbumArtwork(selectedSong)
+
+    val artworkColors = remember(artworkBitmap) {
+        if (artworkBitmap == null) {
+            listOf(Color(0xFF563C91), Color(0xFF8A527F))
+        } else {
+            listOf(
+                Color(artworkBitmap.getPixel(artworkBitmap.width / 4, artworkBitmap.height / 4)),
+                Color(artworkBitmap.getPixel(artworkBitmap.width / 2, artworkBitmap.height / 2)),
+                Color(artworkBitmap.getPixel(artworkBitmap.width * 3 / 4, artworkBitmap.height * 3 / 4))
+            )
+        }
+    }
+
+    val dynamicAccent = remember(artworkColors) {
+        val color = artworkColors.maxByOrNull {
+            it.red * 0.299f + it.green * 0.587f + it.blue * 0.114f
+        } ?: Accent
+
+        Color(
+            red = (color.red + 0.28f).coerceAtMost(1f),
+            green = (color.green + 0.28f).coerceAtMost(1f),
+            blue = (color.blue + 0.28f).coerceAtMost(1f),
+            alpha = 1f
+        )
+    }
+
     var currentTab by remember {
         mutableStateOf("player")
     }
@@ -448,8 +475,37 @@ fun MiniPlayerApp() {
 
         Surface(
             modifier = Modifier.fillMaxSize(),
-            color = Background
+            color = Color.Transparent
         ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                if (artworkBitmap != null) {
+                    Image(
+                        bitmap = artworkBitmap.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .matchParentSize()
+                            .blur(
+                                36.dp,
+                                edgeTreatment = BlurredEdgeTreatment.Unbounded
+                            ),
+                        contentScale = ContentScale.Crop
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    artworkColors[0].copy(alpha = 0.48f),
+                                    artworkColors[1].copy(alpha = 0.62f),
+                                    Background.copy(alpha = 0.88f),
+                                    Background
+                                )
+                            )
+                        )
+                )
 
             Column(
                 modifier = Modifier
@@ -497,6 +553,9 @@ fun MiniPlayerApp() {
                 if (currentTab == "player") {
 
                     PlayerScreen(
+                        artworkBitmap = artworkBitmap,
+                        artworkColors = artworkColors,
+                        dynamicAccent = dynamicAccent,
                         song = selectedSong,
                         isPlaying = isPlaying,
                         isFavorite = isFavorite,
@@ -590,7 +649,7 @@ fun MiniPlayerApp() {
                         iconSize = 23.dp,
                         tint = if (
                             currentTab == "library"
-                        ) Accent else TextSecondary,
+                        ) dynamicAccent else TextSecondary,
                         modifier = Modifier.clickable {
                             currentTab = "library"
                         },
@@ -604,7 +663,7 @@ fun MiniPlayerApp() {
                         iconSize = 23.dp,
                         tint = if (
                             currentTab == "player"
-                        ) Accent else TextSecondary,
+                        ) dynamicAccent else TextSecondary,
                         modifier = Modifier.clickable {
                             currentTab = "player"
                         },
@@ -622,6 +681,7 @@ fun MiniPlayerApp() {
 
                 Spacer(modifier = Modifier.height(24.dp))
             }
+            }
         }
     }
 }
@@ -630,7 +690,9 @@ fun MiniPlayerApp() {
 @Composable
 private fun WaveformProgress(
     progress: Float,
-    onProgress: (Float) -> Unit
+    onProgress: (Float) -> Unit,
+    activeColor: Color,
+    inactiveColor: Color
 ) {
     val currentOnProgress by rememberUpdatedState(onProgress)
 
@@ -669,7 +731,7 @@ private fun WaveformProgress(
             val barCenter = (x + barWidth / 2) / size.width
 
             drawRoundRect(
-                color = if (barCenter <= played) Accent else SurfaceDark,
+                color = if (barCenter <= played) activeColor else inactiveColor,
                 topLeft = Offset(x, centerY - barHeight / 2),
                 size = Size(barWidth, barHeight),
                 cornerRadius = CornerRadius(barWidth / 2)
@@ -680,6 +742,9 @@ private fun WaveformProgress(
 
 @Composable
 fun PlayerScreen(
+    artworkBitmap: Bitmap?,
+    artworkColors: List<Color>,
+    dynamicAccent: Color,
     song: Song,
     isPlaying: Boolean,
     isFavorite: Boolean,
@@ -695,60 +760,11 @@ fun PlayerScreen(
     onPlay: () -> Unit,
     onProgress: (Float) -> Unit
 ) {
-    val bitmap = rememberAlbumArtwork(song)
-
-    val artworkColors = remember(bitmap) {
-        if (bitmap == null) {
-            listOf(
-                Color(0xFF563C91),
-                Color(0xFF8A527F)
-            )
-        } else {
-            listOf(
-                Color(bitmap.getPixel(bitmap.width / 4, bitmap.height / 4)),
-                Color(bitmap.getPixel(bitmap.width / 2, bitmap.height / 2)),
-                Color(bitmap.getPixel(bitmap.width * 3 / 4, bitmap.height * 3 / 4))
-            )
-        }
-    }
-
-    Box(
-        modifier = Modifier.fillMaxWidth()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 12.dp)
     ) {
-        if (bitmap != null) {
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = null,
-                modifier = Modifier
-                    .matchParentSize()
-                    .blur(
-                        36.dp,
-                        edgeTreatment = BlurredEdgeTreatment.Unbounded
-                    ),
-                contentScale = ContentScale.Crop
-            )
-        }
-
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            artworkColors[0].copy(alpha = 0.62f),
-                            artworkColors[1].copy(alpha = 0.72f),
-                            Background.copy(alpha = 0.96f),
-                            Background
-                        )
-                    )
-                )
-        )
-
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 12.dp)
-        ) {
             Text(
                 "NOW PLAYING",
                 color = Color.White.copy(alpha = 0.75f),
@@ -758,7 +774,7 @@ fun PlayerScreen(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            AlbumArtwork(bitmap)
+            AlbumArtwork(artworkBitmap)
 
             Spacer(modifier = Modifier.height(28.dp))
 
@@ -807,7 +823,9 @@ fun PlayerScreen(
 
             WaveformProgress(
                 progress = progress,
-                onProgress = onProgress
+                onProgress = onProgress,
+                activeColor = dynamicAccent,
+                inactiveColor = Color.White.copy(alpha = 0.22f)
             )
 
             Row(
@@ -865,8 +883,8 @@ fun PlayerScreen(
                         .background(
                             Brush.linearGradient(
                                 listOf(
-                                    Color(0xFFC6A9FF),
-                                    Color(0xFF8E72D9)
+                                    artworkColors[0],
+                                    artworkColors[1]
                                 )
                             )
                         )
