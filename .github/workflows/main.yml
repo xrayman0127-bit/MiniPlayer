@@ -34,15 +34,24 @@ jobs:
       - name: Grant execute permission for Gradle Wrapper
         run: chmod +x ./gradlew
 
-      - name: Build Debug APK
-        run: ./gradlew --no-daemon assembleDebug --stacktrace
+      - name: Restore signing keystore
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > app/miniplayer-release.jks
         env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+
+      - name: Build Release APK
+        run: ./gradlew --no-daemon assembleRelease --stacktrace
+        env:
+          KEYSTORE_FILE: miniplayer-release.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
           GRADLE_OPTS: "-Xmx3g -XX:MaxMetaspaceSize=1g"
           JAVA_TOOL_OPTIONS: "-Xmx3g -XX:MaxMetaspaceSize=1g"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: MiniPlayer-debug-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: MiniPlayer-release-APK
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
