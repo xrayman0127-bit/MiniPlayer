@@ -923,7 +923,6 @@ fun PlayerScreen(
             }
         }
     }
-}
 
 @Composable
 fun LibraryScreen(
