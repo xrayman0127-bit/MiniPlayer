@@ -45,6 +45,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -711,21 +713,41 @@ fun PlayerScreen(
     }
 
     Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        artworkColors[0],
-                        artworkColors[1].copy(alpha = 0.75f),
-                        Background
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = null,
+                modifier = Modifier
+                    .matchParentSize()
+                    .blur(
+                        36.dp,
+                        edgeTreatment = BlurredEdgeTreatment.Unbounded
+                    ),
+                contentScale = ContentScale.Crop
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            artworkColors[0].copy(alpha = 0.62f),
+                            artworkColors[1].copy(alpha = 0.72f),
+                            Background.copy(alpha = 0.96f),
+                            Background
+                        )
                     )
                 )
-            )
-            .padding(horizontal = 24.dp, vertical = 12.dp)
-    ) {
+        )
+
         Column(
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 12.dp)
         ) {
             Text(
                 "NOW PLAYING",
