@@ -40,6 +40,14 @@ jobs:
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
 
+      - name: Verify restored signing certificate
+        run: |
+          echo "Keystore size: $(stat -c%s app/miniplayer-release.jks) bytes"
+          keytool -list -v -keystore app/miniplayer-release.jks -storepass "$KEYSTORE_PASSWORD" -alias "$KEYSTORE_ALIAS" | grep -E 'Alias name:|Owner:|SHA256:'
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
+
       - name: Build Release APK
         run: ./gradlew --no-daemon assembleRelease --stacktrace
         env:
