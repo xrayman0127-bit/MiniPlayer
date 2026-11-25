@@ -470,10 +470,12 @@ fun MiniPlayerApp() {
                         letterSpacing = 3.sp
                     )
 
-                    Text(
-                        "⋮",
-                        color = TextPrimary,
-                        fontSize = 28.sp
+                    AppIcon(
+                        kind = AppIconKind.MoreVertical,
+                        footprint = "⋮",
+                        fontSize = 28.sp,
+                        iconSize = 28.dp,
+                        tint = TextPrimary
                     )
                 }
 
@@ -573,32 +575,40 @@ fun MiniPlayerApp() {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
 
-                    Text(
-                        "☷",
-                        color = if (
+                    AppIcon(
+                        kind = AppIconKind.Library,
+                        footprint = "☷",
+                        fontSize = 23.sp,
+                        iconSize = 23.dp,
+                        tint = if (
                             currentTab == "library"
                         ) Accent else TextSecondary,
-                        fontSize = 23.sp,
                         modifier = Modifier.clickable {
                             currentTab = "library"
-                        }
+                        },
+                        contentDescription = "Library"
                     )
 
-                    Text(
-                        "♫",
-                        color = if (
+                    AppIcon(
+                        kind = AppIconKind.Music2,
+                        footprint = "♫",
+                        fontSize = 23.sp,
+                        iconSize = 23.dp,
+                        tint = if (
                             currentTab == "player"
                         ) Accent else TextSecondary,
-                        fontSize = 23.sp,
                         modifier = Modifier.clickable {
                             currentTab = "player"
-                        }
+                        },
+                        contentDescription = "Player"
                     )
 
-                    Text(
-                        "☰",
-                        color = TextSecondary,
-                        fontSize = 23.sp
+                    AppIcon(
+                        kind = AppIconKind.MoreHorizontal,
+                        footprint = "☰",
+                        fontSize = 23.sp,
+                        iconSize = 23.dp,
+                        tint = TextSecondary
                     )
                 }
 
@@ -746,13 +756,16 @@ fun PlayerScreen(
                     )
                 }
 
-                Text(
-                    if (isFavorite) "♥" else "♡",
-                    color = Accent,
+                AppIcon(
+                    kind = if (isFavorite) AppIconKind.HeartFilled else AppIconKind.Heart,
+                    footprint = if (isFavorite) "♥" else "♡",
                     fontSize = 30.sp,
+                    iconSize = 30.dp,
+                    tint = Accent,
                     modifier = Modifier.clickable {
                         onFavorite()
-                    }
+                    },
+                    contentDescription = if (isFavorite) "Remove from favorites" else "Add to favorites"
                 )
             }
 
@@ -787,18 +800,28 @@ fun PlayerScreen(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    if (repeatMode == Player.REPEAT_MODE_ONE) "↻¹" else "↻",
-                    color = if (repeatMode == Player.REPEAT_MODE_OFF) TextSecondary else Accent,
+                AppIcon(
+                    kind = if (repeatMode == Player.REPEAT_MODE_ONE) AppIconKind.RepeatOne else AppIconKind.Repeat,
+                    footprint = if (repeatMode == Player.REPEAT_MODE_ONE) "↻¹" else "↻",
                     fontSize = 25.sp,
-                    modifier = Modifier.clickable { onRepeat() }
+                    iconSize = 25.dp,
+                    tint = if (repeatMode == Player.REPEAT_MODE_OFF) TextSecondary else Accent,
+                    modifier = Modifier.clickable { onRepeat() },
+                    contentDescription = when (repeatMode) {
+                        Player.REPEAT_MODE_ONE -> "Repeat one"
+                        Player.REPEAT_MODE_ALL -> "Repeat all"
+                        else -> "Repeat off"
+                    }
                 )
 
-                Text(
-                    "◀",
-                    color = TextPrimary,
+                AppIcon(
+                    kind = AppIconKind.SkipBack,
+                    footprint = "◀",
                     fontSize = 27.sp,
-                    modifier = Modifier.clickable { onPrevious() }
+                    iconSize = 27.dp,
+                    tint = TextPrimary,
+                    modifier = Modifier.clickable { onPrevious() },
+                    contentDescription = "Previous track"
                 )
 
                 Box(
@@ -816,25 +839,34 @@ fun PlayerScreen(
                         .clickable { onPlay() },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        if (isPlaying) "Ⅱ" else "▶",
-                        color = Color.White,
-                        fontSize = 30.sp
+                    AppIcon(
+                        kind = if (isPlaying) AppIconKind.Pause else AppIconKind.Play,
+                        footprint = if (isPlaying) "Ⅱ" else "▶",
+                        fontSize = 30.sp,
+                        iconSize = 30.dp,
+                        tint = Color.White,
+                        contentDescription = if (isPlaying) "Pause" else "Play"
                     )
                 }
 
-                Text(
-                    "▶",
-                    color = TextPrimary,
+                AppIcon(
+                    kind = AppIconKind.SkipForward,
+                    footprint = "▶",
                     fontSize = 27.sp,
-                    modifier = Modifier.clickable { onNext() }
+                    iconSize = 27.dp,
+                    tint = TextPrimary,
+                    modifier = Modifier.clickable { onNext() },
+                    contentDescription = "Next track"
                 )
 
-                Text(
-                    "⇄",
-                    color = if (isShuffleEnabled) Accent else TextSecondary,
+                AppIcon(
+                    kind = AppIconKind.Shuffle,
+                    footprint = "⇄",
                     fontSize = 24.sp,
-                    modifier = Modifier.clickable { onShuffle() }
+                    iconSize = 24.dp,
+                    tint = if (isShuffleEnabled) Accent else TextSecondary,
+                    modifier = Modifier.clickable { onShuffle() },
+                    contentDescription = if (isShuffleEnabled) "Shuffle on" else "Shuffle off"
                 )
             }
         }
@@ -959,10 +991,12 @@ fun LibraryScreen(
                                 contentAlignment = Alignment.Center
                             ) {
 
-                                Text(
-                                    "♫",
-                                    color = Color.White,
-                                    fontSize = 22.sp
+                                AppIcon(
+                                    kind = AppIconKind.Music,
+                                    footprint = "♫",
+                                    fontSize = 22.sp,
+                                    iconSize = 22.dp,
+                                    tint = Color.White
                                 )
                             }
 
