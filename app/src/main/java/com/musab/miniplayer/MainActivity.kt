@@ -50,6 +50,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -451,13 +452,16 @@ fun MiniPlayerApp() {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 24.dp)
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
             ) {
 
                 Spacer(modifier = Modifier.height(24.dp))
 
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -543,6 +547,7 @@ fun MiniPlayerApp() {
                 } else {
 
                     LibraryScreen(
+                        modifier = Modifier.padding(horizontal = 24.dp),
                         songs = songs,
                         selectedSongId = selectedSong.id,
                         loading = loading,
@@ -567,6 +572,7 @@ fun MiniPlayerApp() {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .padding(horizontal = 24.dp)
                         .clip(RoundedCornerShape(20.dp))
                         .background(SurfaceDark)
                         .padding(vertical = 17.dp),
@@ -744,7 +750,10 @@ fun PlayerScreen(
                         song.title,
                         color = TextPrimary,
                         fontSize = 23.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        minLines = 2,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
 
                     Spacer(modifier = Modifier.height(6.dp))
@@ -752,7 +761,10 @@ fun PlayerScreen(
                     Text(
                         song.artist,
                         color = TextSecondary,
-                        fontSize = 15.sp
+                        fontSize = 15.sp,
+                        minLines = 1,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
@@ -875,6 +887,7 @@ fun PlayerScreen(
 
 @Composable
 fun LibraryScreen(
+    modifier: Modifier = Modifier,
     songs: List<Song>,
     selectedSongId: Long,
     loading: Boolean,
@@ -883,7 +896,7 @@ fun LibraryScreen(
     onSongSelected: (Song) -> Unit
 ) {
 
-    Column {
+    Column(modifier = modifier) {
 
         Text(
             "MUSIC LIBRARY",
