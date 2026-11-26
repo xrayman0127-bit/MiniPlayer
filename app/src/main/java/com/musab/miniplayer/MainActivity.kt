@@ -345,6 +345,13 @@ fun MiniPlayerApp() {
         mutableStateOf("player")
     }
 
+    var librarySearchQuery by remember { mutableStateOf("") }
+    var librarySortOption by remember { mutableStateOf("Title") }
+    var librarySortAscending by remember { mutableStateOf(true) }
+    var librarySelectedTab by remember { mutableStateOf("Songs") }
+    var librarySelectedArtist by remember { mutableStateOf<String?>(null) }
+    var librarySelectedAlbumId by remember { mutableStateOf<Long?>(null) }
+
     var songs by remember {
         mutableStateOf<List<Song>>(emptyList())
     }
@@ -708,6 +715,18 @@ fun MiniPlayerApp() {
                         modifier = Modifier.padding(horizontal = 24.dp),
                         songs = songs,
                         selectedSongId = selectedSong.id,
+                        searchQuery = librarySearchQuery,
+                        onSearchQueryChange = { librarySearchQuery = it },
+                        sortOption = librarySortOption,
+                        onSortOptionChange = { librarySortOption = it },
+                        sortAscending = librarySortAscending,
+                        onSortAscendingChange = { librarySortAscending = it },
+                        selectedTab = librarySelectedTab,
+                        onSelectedTabChange = { librarySelectedTab = it },
+                        selectedArtist = librarySelectedArtist,
+                        onSelectedArtistChange = { librarySelectedArtist = it },
+                        selectedAlbumId = librarySelectedAlbumId,
+                        onSelectedAlbumIdChange = { librarySelectedAlbumId = it },
                         loading = loading,
                         hasPermission = hasPermission,
 
@@ -1317,18 +1336,24 @@ fun LibraryScreen(
     modifier: Modifier = Modifier,
     songs: List<Song>,
     selectedSongId: Long,
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+    sortOption: String,
+    onSortOptionChange: (String) -> Unit,
+    sortAscending: Boolean,
+    onSortAscendingChange: (Boolean) -> Unit,
+    selectedTab: String,
+    onSelectedTabChange: (String) -> Unit,
+    selectedArtist: String?,
+    onSelectedArtistChange: (String?) -> Unit,
+    selectedAlbumId: Long?,
+    onSelectedAlbumIdChange: (Long?) -> Unit,
     loading: Boolean,
     hasPermission: Boolean,
     onRequestPermission: () -> Unit,
     onSongSelected: (Song) -> Unit
 ) {
-    var searchQuery by remember { mutableStateOf("") }
-    var sortOption by remember { mutableStateOf("Title") }
-    var sortAscending by remember { mutableStateOf(true) }
     var sortMenuExpanded by remember { mutableStateOf(false) }
-    var selectedTab by remember { mutableStateOf("Songs") }
-    var selectedArtist by remember { mutableStateOf<String?>(null) }
-    var selectedAlbumId by remember { mutableStateOf<Long?>(null) }
 
     val filteredSongs = remember(songs, searchQuery, sortOption, sortAscending) {
         val query = searchQuery.trim().lowercase()
@@ -1426,7 +1451,7 @@ fun LibraryScreen(
             else -> {
                 OutlinedTextField(
                     value = searchQuery,
-                    onValueChange = { searchQuery = it },
+                    onValueChange = onSearchQueryChange,
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     label = { Text("Search songs, artists or albums") }
@@ -1441,7 +1466,7 @@ fun LibraryScreen(
                     ) {
                         listOf("Songs", "Artists", "Albums").forEach { tab ->
                             TextButton(
-                                onClick = { selectedTab = tab },
+                                onClick = { onSelectedTabChange(tab) },
                                 colors = ButtonDefaults.textButtonColors(
                                     contentColor = if (selectedTab == tab) Accent else TextSecondary
                                 )
@@ -1457,8 +1482,8 @@ fun LibraryScreen(
                 } else {
                     TextButton(
                         onClick = {
-                            selectedArtist = null
-                            selectedAlbumId = null
+                            onSelectedArtistChange(null)
+                            onSelectedAlbumIdChange(null)
                         }
                     ) {
                         Text("← Back to $selectedTab")
@@ -1486,7 +1511,7 @@ fun LibraryScreen(
                                     DropdownMenuItem(
                                         text = { Text(option) },
                                         onClick = {
-                                            sortOption = option
+                                            onSortOptionChange(option)
                                             sortMenuExpanded = false
                                         }
                                     )
@@ -1495,7 +1520,7 @@ fun LibraryScreen(
                         }
 
                         TextButton(
-                            onClick = { sortAscending = !sortAscending }
+                            onClick = { onSortAscendingChange(!sortAscending) }
                         ) {
                             Text(if (sortAscending) "Ascending ↑" else "Descending ↓")
                         }
@@ -1544,7 +1569,7 @@ fun LibraryScreen(
                                             .fillMaxWidth()
                                             .clip(RoundedCornerShape(14.dp))
                                             .background(SurfaceDark)
-                                            .clickable { selectedArtist = group.first }
+                                            .clickable { onSelectedArtistChange(group.first) }
                                             .padding(16.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
@@ -1584,7 +1609,7 @@ fun LibraryScreen(
                                             .fillMaxWidth()
                                             .clip(RoundedCornerShape(14.dp))
                                             .background(SurfaceDark)
-                                            .clickable { selectedAlbumId = group.first }
+                                            .clickable { onSelectedAlbumIdChange(group.first) }
                                             .padding(16.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
