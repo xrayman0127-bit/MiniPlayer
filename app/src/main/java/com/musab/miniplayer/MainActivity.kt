@@ -851,6 +851,8 @@ fun MiniPlayerApp() {
 }
 
 
+}
+
 private suspend fun extractWaveform(
     context: android.content.Context,
     uri: Uri,
