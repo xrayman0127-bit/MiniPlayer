@@ -63,6 +63,8 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 
@@ -267,6 +269,39 @@ fun MiniPlayerApp() {
                 0L
             )
         )
+    }
+
+    val waveformCache = remember {
+        mutableMapOf<Long, List<Float>>()
+    }
+
+    var waveformSamples by remember(selectedSong.id) {
+        mutableStateOf(
+            waveformCache[selectedSong.id] ?: emptyList()
+        )
+    }
+
+    LaunchedEffect(selectedSong.id, selectedSong.uri, selectedSong.duration) {
+        val cached = waveformCache[selectedSong.id]
+
+        if (cached != null) {
+            waveformSamples = cached
+        } else {
+            waveformSamples = emptyList()
+
+            if (selectedSong.id != 0L && selectedSong.uri != Uri.EMPTY) {
+                val result = extractWaveform(
+                    context = context,
+                    uri = selectedSong.uri,
+                    durationMs = selectedSong.duration
+                )
+
+                if (result.isNotEmpty()) {
+                    waveformCache[selectedSong.id] = result
+                    waveformSamples = result
+                }
+            }
+        }
     }
 
     val artworkBitmap = rememberAlbumArtwork(selectedSong)
@@ -560,6 +595,7 @@ fun MiniPlayerApp() {
                         isPlaying = isPlaying,
                         isFavorite = isFavorite,
                         progress = progress,
+                        waveformSamples = waveformSamples,
                         currentPosition = currentPosition,
                         isShuffleEnabled = isShuffleEnabled,
                         repeatMode = repeatMode,
@@ -687,9 +723,295 @@ fun MiniPlayerApp() {
 }
 
 
+private suspend fun extractWaveform(
+    context: android.content.Context,
+    uri: Uri,
+    durationMs: Long,
+    barCount: Int = 64
+): List<Float> = withContext(Dispatchers.IO) {
+    val sums = FloatArray(barCount)
+    val counts = IntArray(barCount)
+
+    val extractor = android.media.MediaExtractor()
+    var decoder: android.media.MediaCodec? = null
+    var decoderStarted = false
+
+    try {
+        val descriptor =
+            context.contentResolver.openFileDescriptor(uri, "r")
+                ?: return@withContext emptyList()
+
+        descriptor.use { fd ->
+            extractor.setDataSource(fd.fileDescriptor)
+
+            var audioTrack = -1
+            var inputFormat: android.media.MediaFormat? = null
+
+            for (i in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(i)
+                val mime = format.getString(
+                    android.media.MediaFormat.KEY_MIME
+                )
+
+                if (mime?.startsWith("audio/") == true) {
+                    audioTrack = i
+                    inputFormat = format
+                    break
+                }
+            }
+
+            if (audioTrack < 0 || inputFormat == null) {
+                return@withContext emptyList()
+            }
+
+            extractor.selectTrack(audioTrack)
+
+            val mime = inputFormat.getString(
+                android.media.MediaFormat.KEY_MIME
+            ) ?: return@withContext emptyList()
+
+            val codec = android.media.MediaCodec.createDecoderByType(mime)
+            decoder = codec
+
+            codec.configure(inputFormat, null, null, 0)
+            codec.start()
+            decoderStarted = true
+
+            var sampleRate = try {
+                inputFormat.getInteger(
+                    android.media.MediaFormat.KEY_SAMPLE_RATE
+                )
+            } catch (_: Exception) {
+                44100
+            }
+
+            var channels = try {
+                inputFormat.getInteger(
+                    android.media.MediaFormat.KEY_CHANNEL_COUNT
+                )
+            } catch (_: Exception) {
+                2
+            }.coerceAtLeast(1)
+
+            var pcmEncoding = 2
+            val totalFrames =
+                (durationMs.coerceAtLeast(1L) * sampleRate / 1000L)
+                    .coerceAtLeast(1L)
+
+            val info = android.media.MediaCodec.BufferInfo()
+            var inputDone = false
+            var outputDone = false
+            var idleLoops = 0
+
+            while (!outputDone) {
+                currentCoroutineContext().ensureActive()
+
+                var madeProgress = false
+
+                if (!inputDone) {
+                    val inputIndex = codec.dequeueInputBuffer(10000)
+
+                    if (inputIndex >= 0) {
+                        val inputBuffer = codec.getInputBuffer(inputIndex)
+
+                        if (inputBuffer != null) {
+                            inputBuffer.clear()
+                            val size = extractor.readSampleData(inputBuffer, 0)
+
+                            if (size < 0) {
+                                codec.queueInputBuffer(
+                                    inputIndex,
+                                    0,
+                                    0,
+                                    0L,
+                                    android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM
+                                )
+                                inputDone = true
+                            } else {
+                                codec.queueInputBuffer(
+                                    inputIndex,
+                                    0,
+                                    size,
+                                    extractor.sampleTime,
+                                    0
+                                )
+                                extractor.advance()
+                            }
+                            madeProgress = true
+                        }
+                    }
+                }
+
+                val outputIndex = codec.dequeueOutputBuffer(info, 10000)
+
+                when {
+                    outputIndex >= 0 -> {
+                        val output = codec.getOutputBuffer(outputIndex)
+
+                        if (output != null && info.size > 0) {
+                            val format = codec.outputFormat
+
+                            sampleRate = try {
+                                format.getInteger(
+                                    android.media.MediaFormat.KEY_SAMPLE_RATE
+                                )
+                            } catch (_: Exception) {
+                                sampleRate
+                            }
+
+                            channels = try {
+                                format.getInteger(
+                                    android.media.MediaFormat.KEY_CHANNEL_COUNT
+                                )
+                            } catch (_: Exception) {
+                                channels
+                            }.coerceAtLeast(1)
+
+                            pcmEncoding = try {
+                                format.getInteger(
+                                    android.media.MediaFormat.KEY_PCM_ENCODING
+                                )
+                            } catch (_: Exception) {
+                                pcmEncoding
+                            }
+
+                            val bytesPerSample = when (pcmEncoding) {
+                                3 -> 1
+                                4, 22 -> 4
+                                21 -> 3
+                                else -> 2
+                            }
+
+                            val buffer = output.duplicate().order(
+                                java.nio.ByteOrder.LITTLE_ENDIAN
+                            )
+                            buffer.position(info.offset)
+                            buffer.limit(info.offset + info.size)
+
+                            val frameCount =
+                                buffer.remaining() /
+                                (bytesPerSample * channels)
+
+                            val startFrame = (
+                                info.presentationTimeUs.coerceAtLeast(0L) *
+                                sampleRate / 1_000_000L
+                            )
+
+                            for (frame in 0 until frameCount) {
+                                var framePower = 0f
+
+                                for (channel in 0 until channels) {
+                                    val value = when (pcmEncoding) {
+                                        3 -> (
+                                            (buffer.get().toInt() and 0xff) -
+                                            128
+                                        ) / 128f
+
+                                        4 -> buffer.float.coerceIn(-1f, 1f)
+
+                                        21 -> {
+                                            val b0 = buffer.get().toInt() and 0xff
+                                            val b1 = buffer.get().toInt() and 0xff
+                                            val b2 = buffer.get().toInt()
+                                            val raw = (b2 shl 16) or
+                                                (b1 shl 8) or b0
+                                            val signed = if (
+                                                (raw and 0x800000) != 0
+                                            ) {
+                                                raw or -0x1000000
+                                            } else {
+                                                raw
+                                            }
+                                            signed / 8388608f
+                                        }
+
+                                        22 -> buffer.int / 2147483648f
+
+                                        else -> buffer.short / 32768f
+                                    }
+
+                                    framePower += value * value
+                                }
+
+                                framePower /= channels
+
+                                val absoluteFrame = startFrame + frame
+                                val bucket = (
+                                    absoluteFrame.toDouble() *
+                                    barCount / totalFrames
+                                ).toInt()
+
+                                if (bucket in 0 until barCount) {
+                                    sums[bucket] += framePower
+                                    counts[bucket]++
+                                }
+                            }
+                        }
+
+                        val eos = (
+                            info.flags and
+                            android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM
+                        ) != 0
+
+                        codec.releaseOutputBuffer(outputIndex, false)
+                        if (eos) outputDone = true
+                        madeProgress = true
+                    }
+
+                    outputIndex ==
+                        android.media.MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                        madeProgress = true
+                    }
+                }
+
+                if (madeProgress) {
+                    idleLoops = 0
+                } else {
+                    idleLoops++
+                    if (idleLoops > 3000) {
+                        break
+                    }
+                }
+            }
+        }
+
+        val levels = FloatArray(barCount)
+        var maximum = 0f
+
+        for (i in 0 until barCount) {
+            if (counts[i] > 0) {
+                levels[i] = kotlin.math.sqrt(
+                    (sums[i] / counts[i]).toDouble()
+                ).toFloat()
+                maximum = maxOf(maximum, levels[i])
+            }
+        }
+
+        if (maximum <= 0f) {
+            emptyList()
+        } else {
+            levels.map {
+                (0.08f + 0.92f * (it / maximum))
+                    .coerceIn(0.08f, 1f)
+            }
+        }
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        emptyList()
+    } finally {
+        if (decoderStarted) {
+            runCatching { decoder?.stop() }
+        }
+        runCatching { decoder?.release() }
+        runCatching { extractor.release() }
+    }
+}
+
 @Composable
 private fun WaveformProgress(
     progress: Float,
+    samples: List<Float>,
     onProgress: (Float) -> Unit,
     activeColor: Color,
     inactiveColor: Color
@@ -716,15 +1038,18 @@ private fun WaveformProgress(
                 }
             }
     ) {
-        val count = 64
+        val count = if (samples.isEmpty()) 64 else samples.size
         val gap = 2.dp.toPx()
         val barWidth = (size.width - gap * (count - 1)) / count
         val centerY = size.height / 2
         val played = progress.coerceIn(0f, 1f)
 
         for (i in 0 until count) {
-            val heightFactor =
-                0.22f + abs(sin(i * 0.47)).toFloat() * 0.78f
+            val heightFactor = if (samples.isEmpty()) {
+                0.12f
+            } else {
+                samples[i].coerceIn(0.08f, 1f)
+            }
 
             val barHeight = size.height * heightFactor
             val x = i * (barWidth + gap)
@@ -749,6 +1074,7 @@ fun PlayerScreen(
     isPlaying: Boolean,
     isFavorite: Boolean,
     progress: Float,
+    waveformSamples: List<Float>,
     currentPosition: Long,
     isShuffleEnabled: Boolean,
     repeatMode: Int,
@@ -823,6 +1149,7 @@ fun PlayerScreen(
 
             WaveformProgress(
                 progress = progress,
+                samples = waveformSamples,
                 onProgress = onProgress,
                 activeColor = dynamicAccent,
                 inactiveColor = Color.White.copy(alpha = 0.22f)
