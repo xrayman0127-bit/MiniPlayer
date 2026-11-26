@@ -1314,9 +1314,38 @@ fun LibraryScreen(
     onRequestPermission: () -> Unit,
     onSongSelected: (Song) -> Unit
 ) {
+    var searchQuery by remember { mutableStateOf("") }
+    var sortOption by remember { mutableStateOf("Title") }
+    var sortAscending by remember { mutableStateOf(true) }
+    var sortMenuExpanded by remember { mutableStateOf(false) }
+
+    val filteredSongs = remember(
+        songs, searchQuery, sortOption, sortAscending
+    ) {
+        val query = searchQuery.trim().lowercase()
+
+        val matchingSongs = songs.filter { song ->
+            query.isEmpty() ||
+                song.title.lowercase().contains(query) ||
+                song.artist.lowercase().contains(query)
+        }
+
+        val comparator = when (sortOption) {
+            "Artist" -> compareBy<Song> { it.artist.lowercase() }
+                .thenBy { it.title.lowercase() }
+            "Duration" -> compareBy<Song> { it.duration }
+                .thenBy { it.title.lowercase() }
+            else -> compareBy<Song> { it.title.lowercase() }
+        }
+
+        if (sortAscending) {
+            matchingSongs.sortedWith(comparator)
+        } else {
+            matchingSongs.sortedWith(comparator.reversed())
+        }
+    }
 
     Column(modifier = modifier) {
-
         Text(
             "MUSIC LIBRARY",
             color = TextPrimary,
@@ -1327,17 +1356,15 @@ fun LibraryScreen(
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            "${songs.size} songs",
+            "${filteredSongs.size} of ${songs.size} songs",
             color = TextSecondary,
             fontSize = 14.sp
         )
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
         when {
-
             !hasPermission -> {
-
                 Text(
                     "Allow MiniPlayer to access your music files.",
                     color = TextSecondary,
@@ -1352,23 +1379,15 @@ fun LibraryScreen(
                         containerColor = Accent
                     )
                 ) {
-
-                    Text(
-                        "Grant Permission",
-                        color = Background
-                    )
+                    Text("Grant Permission", color = Background)
                 }
             }
 
             loading -> {
-
-                CircularProgressIndicator(
-                    color = Accent
-                )
+                CircularProgressIndicator(color = Accent)
             }
 
             songs.isEmpty() -> {
-
                 Text(
                     "No music files found on your device.",
                     color = TextSecondary
@@ -1376,89 +1395,142 @@ fun LibraryScreen(
             }
 
             else -> {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Search songs or artists") }
+                )
 
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 600.dp),
+                Spacer(modifier = Modifier.height(10.dp))
 
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-
-                    items(
-                        items = songs,
-                        key = { song -> song.id }
-                    ) { song ->
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(
-                                    if (song.id == selectedSongId)
-                                        Accent.copy(alpha = 0.18f)
-                                    else SurfaceDark
-                                )
-                                .clickable {
-                                    onSongSelected(song)
-                                }
-                                .padding(16.dp),
-
-                            verticalAlignment = Alignment.CenterVertically
+                    Box {
+                        TextButton(
+                            onClick = { sortMenuExpanded = true }
                         ) {
+                            Text("Sort: $sortOption")
+                        }
 
-                            Box(
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(
-                                        Brush.linearGradient(
-                                            listOf(
-                                                Color(0xFF563C91),
-                                                Color(0xFFB65F83)
-                                            )
-                                        )
-                                    ),
-
-                                contentAlignment = Alignment.Center
-                            ) {
-
-                                AppIcon(
-                                    kind = AppIconKind.Music,
-                                    footprint = "♫",
-                                    fontSize = 22.sp,
-                                    iconSize = 22.dp,
-                                    tint = Color.White
+                        DropdownMenu(
+                            expanded = sortMenuExpanded,
+                            onDismissRequest = {
+                                sortMenuExpanded = false
+                            }
+                        ) {
+                            listOf("Title", "Artist", "Duration").forEach { option ->
+                                DropdownMenuItem(
+                                    text = { Text(option) },
+                                    onClick = {
+                                        sortOption = option
+                                        sortMenuExpanded = false
+                                    }
                                 )
                             }
+                        }
+                    }
 
-                            Spacer(
-                                modifier = Modifier.width(14.dp)
-                            )
+                    TextButton(
+                        onClick = { sortAscending = !sortAscending }
+                    ) {
+                        Text(
+                            if (sortAscending) "Ascending ↑"
+                            else "Descending ↓"
+                        )
+                    }
+                }
 
-                            Column(
-                                modifier = Modifier.weight(1f)
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (filteredSongs.isEmpty()) {
+                    Text(
+                        "No matching songs found.",
+                        color = TextSecondary,
+                        fontSize = 14.sp
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 600.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(
+                            items = filteredSongs,
+                            key = { song -> song.id }
+                        ) { song ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(
+                                        if (song.id == selectedSongId)
+                                            Accent.copy(alpha = 0.18f)
+                                        else SurfaceDark
+                                    )
+                                    .clickable {
+                                        onSongSelected(song)
+                                    }
+                                    .padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(
+                                            Brush.linearGradient(
+                                                listOf(
+                                                    Color(0xFF563C91),
+                                                    Color(0xFFB65F83)
+                                                )
+                                            )
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    AppIcon(
+                                        kind = AppIconKind.Music,
+                                        footprint = "♫",
+                                        fontSize = 22.sp,
+                                        iconSize = 22.dp,
+                                        tint = Color.White
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.width(14.dp))
+
+                                Column(
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(
+                                        song.title,
+                                        color = TextPrimary,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 15.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+
+                                    Text(
+                                        song.artist,
+                                        color = TextSecondary,
+                                        fontSize = 12.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
 
                                 Text(
-                                    song.title,
-                                    color = TextPrimary,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 15.sp
-                                )
-
-                                Text(
-                                    song.artist,
+                                    formatDuration(song.duration),
                                     color = TextSecondary,
                                     fontSize = 12.sp
                                 )
                             }
-
-                            Text(
-                                formatDuration(song.duration),
-                                color = TextSecondary,
-                                fontSize = 12.sp
-                            )
                         }
                     }
                 }
