@@ -3,6 +3,7 @@ package com.musab.miniplayer
 
 import android.Manifest
 import android.content.ContentUris
+import android.content.ComponentName
 import android.content.pm.PackageManager
 import android.database.Cursor
 import android.graphics.Bitmap
@@ -60,7 +61,8 @@ import androidx.core.content.ContextCompat
 
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -364,62 +366,104 @@ fun MiniPlayerApp() {
 
     AppContextHolder.context = context.applicationContext
 
-    // إنشاء مشغل الصوت
-    val player = remember(context) {
-        ExoPlayer.Builder(context).build()
+    // الاتصال بخدمة تشغيل الموسيقى
+    var controller by remember {
+        mutableStateOf<MediaController?>(null)
     }
 
-    // مراقبة حالة المشغل وتحرير موارده
-    DisposableEffect(player) {
+    val controllerFuture = remember(context) {
+        MediaController.Builder(
+            context,
+            SessionToken(
+                context,
+                ComponentName(context, MusicPlaybackService::class.java)
+            )
+        ).buildAsync()
+    }
 
-        val listener = object : Player.Listener {
+    DisposableEffect(controllerFuture) {
+        var disposed = false
 
-            override fun onIsPlayingChanged(
-                isPlayingNow: Boolean
-            ) {
-                isPlaying = isPlayingNow
-            }
-
-            override fun onPlaybackStateChanged(
-                playbackState: Int
-            ) {
-                if (playbackState == Player.STATE_ENDED) {
-                    isPlaying = false
-                    progress = 0f
-                    currentPosition = 0L
+        controllerFuture.addListener(
+            Runnable {
+                if (!disposed) {
+                    try {
+                        controller = controllerFuture.get()
+                    } catch (error: Exception) {
+                        android.util.Log.e(
+                            "MiniPlayer",
+                            "Failed to connect to playback service",
+                            error
+                        )
+                    }
                 }
-            }
-
-            override fun onMediaItemTransition(
-                mediaItem: MediaItem?,
-                reason: Int
-            ) {
-                val song = latestSongs.getOrNull(player.currentMediaItemIndex)
-                if (song != null) {
-                    selectedSong = song
-                    progress = 0f
-                    currentPosition = 0L
-                }
-            }
-
-            override fun onShuffleModeEnabledChanged(
-                shuffleModeEnabled: Boolean
-            ) {
-                isShuffleEnabled = shuffleModeEnabled
-            }
-
-            override fun onRepeatModeChanged(
-                newRepeatMode: Int
-            ) {
-                repeatMode = newRepeatMode
-            }
-        }
-
-        player.addListener(listener)
+            },
+            ContextCompat.getMainExecutor(context)
+        )
 
         onDispose {
-            player.removeListener(listener)
-            player.release()
+            disposed = true
+            MediaController.releaseFuture(controllerFuture)
+        }
+    }
+
+    val player = controller
+
+    // مراقبة حالة المشغل المتصل بالخدمة
+    DisposableEffect(player) {
+        val connectedPlayer = player
+
+        if (connectedPlayer == null) {
+            onDispose {}
+        } else {
+            val listener = object : Player.Listener {
+
+                override fun onIsPlayingChanged(isPlayingNow: Boolean) {
+                    isPlaying = isPlayingNow
+                }
+
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    if (playbackState == Player.STATE_ENDED) {
+                        isPlaying = false
+                        progress = 0f
+                        currentPosition = 0L
+                    }
+                }
+
+                override fun onMediaItemTransition(
+                    mediaItem: MediaItem?,
+                    reason: Int
+                ) {
+                    val song = latestSongs.getOrNull(
+                        connectedPlayer.currentMediaItemIndex
+                    )
+                    if (song != null) {
+                        selectedSong = song
+                        progress = 0f
+                        currentPosition = 0L
+                    }
+                }
+
+                override fun onShuffleModeEnabledChanged(
+                    shuffleModeEnabled: Boolean
+                ) {
+                    isShuffleEnabled = shuffleModeEnabled
+                }
+
+                override fun onRepeatModeChanged(newRepeatMode: Int) {
+                    repeatMode = newRepeatMode
+                }
+            }
+
+            connectedPlayer.addListener(listener)
+
+            isPlaying = connectedPlayer.isPlaying
+            isShuffleEnabled = connectedPlayer.shuffleModeEnabled
+            repeatMode = connectedPlayer.repeatMode
+
+            onDispose {
+                connectedPlayer.removeListener(listener)
+            }
         }
     }
 
@@ -442,40 +486,45 @@ fun MiniPlayerApp() {
     }
 
     // تحديث الوقت وشريط التقدم
-    LaunchedEffect(isPlaying, selectedSong.id) {
+    LaunchedEffect(isPlaying, selectedSong.id, player) {
+        val connectedPlayer = player ?: return@LaunchedEffect
 
         while (isPlaying) {
-
-            val duration = player.duration
-
+            val duration = connectedPlayer.duration
             if (duration > 0) {
-
-                currentPosition = player.currentPosition
-
+                currentPosition = connectedPlayer.currentPosition
                 progress = (
-                    currentPosition.toFloat() /
-                    duration.toFloat()
+                    currentPosition.toFloat() / duration.toFloat()
                 ).coerceIn(0f, 1f)
             }
-
             delay(500)
         }
     }
 
     // وظائف قائمة التشغيل والتحكم
     fun playSong(song: Song) {
+        val activePlayer = player ?: return
         val songIndex = songs.indexOfFirst { it.id == song.id }
         if (songIndex < 0) return
 
         val mediaItems = songs.map { songItem ->
-            MediaItem.fromUri(songItem.uri)
+            MediaItem.Builder()
+                .setMediaId(songItem.id.toString())
+                .setUri(songItem.uri)
+                .setMediaMetadata(
+                    androidx.media3.common.MediaMetadata.Builder()
+                        .setTitle(songItem.title)
+                        .setArtist(songItem.artist)
+                        .build()
+                )
+                .build()
         }
 
-        player.setMediaItems(mediaItems, songIndex, 0L)
-        player.shuffleModeEnabled = isShuffleEnabled
-        player.repeatMode = repeatMode
-        player.prepare()
-        player.play()
+        activePlayer.setMediaItems(mediaItems, songIndex, 0L)
+        activePlayer.shuffleModeEnabled = isShuffleEnabled
+        activePlayer.repeatMode = repeatMode
+        activePlayer.prepare()
+        activePlayer.play()
 
         selectedSong = song
         progress = 0f
@@ -483,23 +532,28 @@ fun MiniPlayerApp() {
     }
 
     fun previousSong() {
-        if (player.mediaItemCount > 0) {
-            player.seekToPreviousMediaItem()
+        val activePlayer = player ?: return
+        if (activePlayer.mediaItemCount > 0) {
+            activePlayer.seekToPreviousMediaItem()
         }
     }
 
     fun nextSong() {
-        if (player.mediaItemCount > 0) {
-            player.seekToNextMediaItem()
+        val activePlayer = player ?: return
+        if (activePlayer.mediaItemCount > 0) {
+            activePlayer.seekToNextMediaItem()
         }
     }
 
     fun toggleShuffle() {
-        player.shuffleModeEnabled = !player.shuffleModeEnabled
+        player?.let {
+            it.shuffleModeEnabled = !it.shuffleModeEnabled
+        }
     }
 
     fun cycleRepeat() {
-        player.repeatMode = when (player.repeatMode) {
+        val activePlayer = player ?: return
+        activePlayer.repeatMode = when (activePlayer.repeatMode) {
             Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
             Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
             else -> Player.REPEAT_MODE_OFF
@@ -609,32 +663,31 @@ fun MiniPlayerApp() {
                         },
 
                         onPlay = {
-
-                            if (selectedSong.uri != Uri.EMPTY) {
-
-                                if (player.isPlaying) {
-                                    player.pause()
+                            val activePlayer = player
+                            if (
+                                selectedSong.uri != Uri.EMPTY &&
+                                activePlayer != null
+                            ) {
+                                if (activePlayer.isPlaying) {
+                                    activePlayer.pause()
                                 } else {
                                     if (
-                                        player.playbackState ==
+                                        activePlayer.playbackState ==
                                         Player.STATE_ENDED
                                     ) {
-                                        player.seekTo(0)
+                                        activePlayer.seekTo(0)
                                     }
-
-                                    player.play()
+                                    activePlayer.play()
                                 }
                             }
                         },
 
                         onProgress = { value ->
-
                             progress = value
-
-                            val duration = player.duration
+                            val duration = player?.duration ?: 0L
 
                             if (duration > 0) {
-                                player.seekTo(
+                                player?.seekTo(
                                     (duration * value).toLong()
                                 )
                             }

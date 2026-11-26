@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
@@ -12,6 +14,15 @@
         android:label="MiniPlayer"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+        <service
+            android:name=".MusicPlaybackService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaLibraryService" />
+            </intent-filter>
+        </service>
 
         <activity
             android:name=".MainActivity"
