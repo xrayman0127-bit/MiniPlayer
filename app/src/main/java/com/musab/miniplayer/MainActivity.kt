@@ -82,7 +82,8 @@ data class Song(
     val artist: String,
     val duration: Long,
     val uri: Uri,
-    val albumId: Long
+    val albumId: Long,
+    val album: String = "Unknown Album"
 )
 
 @Composable
@@ -175,7 +176,8 @@ private suspend fun loadSongs(): List<Song> =
             MediaStore.Audio.Media.TITLE,
             MediaStore.Audio.Media.ARTIST,
             MediaStore.Audio.Media.DURATION,
-            MediaStore.Audio.Media.ALBUM_ID
+            MediaStore.Audio.Media.ALBUM_ID,
+            MediaStore.Audio.Media.ALBUM
         )
 
         val selection =
@@ -209,6 +211,9 @@ private suspend fun loadSongs(): List<Song> =
             val albumIdColumn =
                 it.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
 
+            val albumColumn =
+                it.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
+
             while (it.moveToNext()) {
 
                 val songId = it.getLong(idColumn)
@@ -225,7 +230,10 @@ private suspend fun loadSongs(): List<Song> =
                             collection,
                             songId
                         ),
-                        albumId = it.getLong(albumIdColumn)
+                        albumId = it.getLong(albumIdColumn),
+                        album = it.getString(albumColumn)
+                            ?.takeIf { name -> name.isNotBlank() }
+                            ?: "Unknown Album"
                     )
                 )
             }
@@ -1318,16 +1326,18 @@ fun LibraryScreen(
     var sortOption by remember { mutableStateOf("Title") }
     var sortAscending by remember { mutableStateOf(true) }
     var sortMenuExpanded by remember { mutableStateOf(false) }
+    var selectedTab by remember { mutableStateOf("Songs") }
+    var selectedArtist by remember { mutableStateOf<String?>(null) }
+    var selectedAlbumId by remember { mutableStateOf<Long?>(null) }
 
-    val filteredSongs = remember(
-        songs, searchQuery, sortOption, sortAscending
-    ) {
+    val filteredSongs = remember(songs, searchQuery, sortOption, sortAscending) {
         val query = searchQuery.trim().lowercase()
 
         val matchingSongs = songs.filter { song ->
             query.isEmpty() ||
                 song.title.lowercase().contains(query) ||
-                song.artist.lowercase().contains(query)
+                song.artist.lowercase().contains(query) ||
+                song.album.lowercase().contains(query)
         }
 
         val comparator = when (sortOption) {
@@ -1338,10 +1348,31 @@ fun LibraryScreen(
             else -> compareBy<Song> { it.title.lowercase() }
         }
 
-        if (sortAscending) {
-            matchingSongs.sortedWith(comparator)
-        } else {
-            matchingSongs.sortedWith(comparator.reversed())
+        if (sortAscending) matchingSongs.sortedWith(comparator)
+        else matchingSongs.sortedWith(comparator.reversed())
+    }
+
+    val artistGroups = remember(filteredSongs) {
+        filteredSongs
+            .groupBy { it.artist.trim().ifBlank { "Unknown Artist" } }
+            .toList()
+            .sortedBy { it.first.lowercase() }
+    }
+
+    val albumGroups = remember(filteredSongs) {
+        filteredSongs
+            .groupBy { it.albumId }
+            .toList()
+            .sortedBy { it.second.firstOrNull()?.album?.lowercase() ?: "" }
+    }
+
+    val detailSongs = remember(filteredSongs, selectedArtist, selectedAlbumId) {
+        when {
+            selectedArtist != null ->
+                filteredSongs.filter { it.artist.trim().ifBlank { "Unknown Artist" } == selectedArtist }
+            selectedAlbumId != null ->
+                filteredSongs.filter { it.albumId == selectedAlbumId }
+            else -> emptyList()
         }
     }
 
@@ -1366,7 +1397,7 @@ fun LibraryScreen(
         when {
             !hasPermission -> {
                 Text(
-                    "Allow MiniPlayer to access your music files.",
+                    "Allow Muzora to access your music files.",
                     color = TextSecondary,
                     fontSize = 14.sp
                 )
@@ -1375,9 +1406,7 @@ fun LibraryScreen(
 
                 Button(
                     onClick = onRequestPermission,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Accent
-                    )
+                    colors = ButtonDefaults.buttonColors(containerColor = Accent)
                 ) {
                     Text("Grant Permission", color = Background)
                 }
@@ -1400,140 +1429,276 @@ fun LibraryScreen(
                     onValueChange = { searchQuery = it },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    label = { Text("Search songs or artists") }
+                    label = { Text("Search songs, artists or albums") }
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Box {
-                        TextButton(
-                            onClick = { sortMenuExpanded = true }
-                        ) {
-                            Text("Sort: $sortOption")
-                        }
-
-                        DropdownMenu(
-                            expanded = sortMenuExpanded,
-                            onDismissRequest = {
-                                sortMenuExpanded = false
-                            }
-                        ) {
-                            listOf("Title", "Artist", "Duration").forEach { option ->
-                                DropdownMenuItem(
-                                    text = { Text(option) },
-                                    onClick = {
-                                        sortOption = option
-                                        sortMenuExpanded = false
-                                    }
+                if (selectedArtist == null && selectedAlbumId == null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        listOf("Songs", "Artists", "Albums").forEach { tab ->
+                            TextButton(
+                                onClick = { selectedTab = tab },
+                                colors = ButtonDefaults.textButtonColors(
+                                    contentColor = if (selectedTab == tab) Accent else TextSecondary
+                                )
+                            ) {
+                                Text(
+                                    tab,
+                                    fontWeight = if (selectedTab == tab) FontWeight.Bold
+                                    else FontWeight.Normal
                                 )
                             }
                         }
                     }
-
+                } else {
                     TextButton(
-                        onClick = { sortAscending = !sortAscending }
+                        onClick = {
+                            selectedArtist = null
+                            selectedAlbumId = null
+                        }
                     ) {
-                        Text(
-                            if (sortAscending) "Ascending ↑"
-                            else "Descending ↓"
-                        )
+                        Text("← Back to $selectedTab")
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                if (selectedTab == "Songs" || selectedArtist != null || selectedAlbumId != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box {
+                            TextButton(onClick = { sortMenuExpanded = true }) {
+                                Text("Sort: $sortOption")
+                            }
+
+                            DropdownMenu(
+                                expanded = sortMenuExpanded,
+                                onDismissRequest = { sortMenuExpanded = false }
+                            ) {
+                                listOf("Title", "Artist", "Duration").forEach { option ->
+                                    DropdownMenuItem(
+                                        text = { Text(option) },
+                                        onClick = {
+                                            sortOption = option
+                                            sortMenuExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
+                        TextButton(
+                            onClick = { sortAscending = !sortAscending }
+                        ) {
+                            Text(if (sortAscending) "Ascending ↑" else "Descending ↓")
+                        }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                if (filteredSongs.isEmpty()) {
-                    Text(
-                        "No matching songs found.",
-                        color = TextSecondary,
-                        fontSize = 14.sp
-                    )
-                } else {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 600.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(
-                            items = filteredSongs,
-                            key = { song -> song.id }
-                        ) { song ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(
-                                        if (song.id == selectedSongId)
-                                            Accent.copy(alpha = 0.18f)
-                                        else SurfaceDark
-                                    )
-                                    .clickable {
-                                        onSongSelected(song)
-                                    }
-                                    .padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                when {
+                    selectedArtist != null || selectedAlbumId != null -> {
+                        val detailTitle = selectedArtist
+                            ?: songs.firstOrNull { it.albumId == selectedAlbumId }?.album
+                            ?: "Unknown Album"
+
+                        Text(
+                            detailTitle,
+                            color = TextPrimary,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Text(
+                            "${detailSongs.size} songs",
+                            color = TextSecondary,
+                            fontSize = 13.sp
+                        )
+
+                        SongList(
+                            songs = detailSongs,
+                            selectedSongId = selectedSongId,
+                            onSongSelected = onSongSelected
+                        )
+                    }
+
+                    selectedTab == "Artists" -> {
+                        if (artistGroups.isEmpty()) {
+                            Text("No artists found.", color = TextSecondary)
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxWidth().heightIn(max = 600.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(48.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(
-                                            Brush.linearGradient(
-                                                listOf(
-                                                    Color(0xFF563C91),
-                                                    Color(0xFFB65F83)
-                                                )
+                                items(items = artistGroups, key = { it.first }) { group ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .background(SurfaceDark)
+                                            .clickable { selectedArtist = group.first }
+                                            .padding(16.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                group.first,
+                                                color = TextPrimary,
+                                                fontWeight = FontWeight.SemiBold
                                             )
-                                        ),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    AppIcon(
-                                        kind = AppIconKind.Music,
-                                        footprint = "♫",
-                                        fontSize = 22.sp,
-                                        iconSize = 22.dp,
-                                        tint = Color.White
-                                    )
+                                            Text(
+                                                "${group.second.size} songs",
+                                                color = TextSecondary,
+                                                fontSize = 12.sp
+                                            )
+                                        }
+                                        Text("›", color = Accent, fontSize = 24.sp)
+                                    }
                                 }
-
-                                Spacer(modifier = Modifier.width(14.dp))
-
-                                Column(
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text(
-                                        song.title,
-                                        color = TextPrimary,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 15.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-
-                                    Text(
-                                        song.artist,
-                                        color = TextSecondary,
-                                        fontSize = 12.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-
-                                Text(
-                                    formatDuration(song.duration),
-                                    color = TextSecondary,
-                                    fontSize = 12.sp
-                                )
                             }
                         }
                     }
+
+                    selectedTab == "Albums" -> {
+                        if (albumGroups.isEmpty()) {
+                            Text("No albums found.", color = TextSecondary)
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxWidth().heightIn(max = 600.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(items = albumGroups, key = { it.first }) { group ->
+                                    val albumSongs = group.second
+                                    val firstSong = albumSongs.first()
+
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .background(SurfaceDark)
+                                            .clickable { selectedAlbumId = group.first }
+                                            .padding(16.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                firstSong.album,
+                                                color = TextPrimary,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                            Text(
+                                                "${albumSongs.size} songs • ${firstSong.artist}",
+                                                color = TextSecondary,
+                                                fontSize = 12.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        Text("›", color = Accent, fontSize = 24.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    else -> {
+                        if (filteredSongs.isEmpty()) {
+                            Text("No matching songs found.", color = TextSecondary)
+                        } else {
+                            SongList(
+                                songs = filteredSongs,
+                                selectedSongId = selectedSongId,
+                                onSongSelected = onSongSelected
+                            )
+                        }
+                    }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SongList(
+    songs: List<Song>,
+    selectedSongId: Long,
+    onSongSelected: (Song) -> Unit
+) {
+    if (songs.isEmpty()) {
+        Text("No matching songs found.", color = TextSecondary)
+        return
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxWidth().heightIn(max = 600.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(items = songs, key = { it.id }) { song ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(
+                        if (song.id == selectedSongId) Accent.copy(alpha = 0.18f)
+                        else SurfaceDark
+                    )
+                    .clickable { onSongSelected(song) }
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFF563C91), Color(0xFFB65F83))
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AppIcon(
+                        kind = AppIconKind.Music,
+                        footprint = "♫",
+                        fontSize = 22.sp,
+                        iconSize = 22.dp,
+                        tint = Color.White
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(14.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        song.title,
+                        color = TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 15.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        "${song.artist} • ${song.album}",
+                        color = TextSecondary,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Text(
+                    formatDuration(song.duration),
+                    color = TextSecondary,
+                    fontSize = 12.sp
+                )
             }
         }
     }
