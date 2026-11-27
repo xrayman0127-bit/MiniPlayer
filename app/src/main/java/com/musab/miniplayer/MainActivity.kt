@@ -80,6 +80,9 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import com.musab.miniplayer.data.local.DatabaseProvider
+import com.musab.miniplayer.data.local.entity.FavoriteEntity
 
 private val Background = Color(0xFF101016)
 private val SurfaceDark = Color(0xFF1D1C27)
@@ -94,8 +97,29 @@ data class Song(
     val duration: Long,
     val uri: Uri,
     val albumId: Long,
-    val album: String = "Unknown Album"
+    val album: String = "Unknown Album",
+    val fileName: String = "",
+    val extension: String = "",
+    val folder: String = "",
+    val fileSize: Long = 0L
 )
+
+private fun Song.stableKey(): String {
+    val identity = listOf(
+        title.trim().lowercase(),
+        artist.trim().lowercase(),
+        album.trim().lowercase(),
+        fileName.trim().lowercase(),
+        extension.trim().lowercase(),
+        fileSize.toString()
+    ).joinToString("|")
+
+    val digest = java.security.MessageDigest
+        .getInstance("SHA-256")
+        .digest(identity.toByteArray(Charsets.UTF_8))
+
+    return digest.joinToString("") { "%02x".format(it) }
+}
 
 @Composable
 private fun rememberAlbumArtwork(song: Song): Bitmap? {
@@ -127,13 +151,35 @@ private fun rememberAlbumArtwork(song: Song): Bitmap? {
 }
 
 @Composable
-private fun AlbumArtwork(bitmap: Bitmap?) {
+private fun AlbumArtwork(
+    bitmap: Bitmap?,
+    onSwipeDown: () -> Unit
+) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(1f)
             .clip(RoundedCornerShape(28.dp))
-            .background(Color(0xFF563C91)),
+            .background(Color(0xFF563C91))
+            .pointerInput(onSwipeDown) {
+                var totalDragY = 0f
+
+                detectDragGestures(
+                    onDragEnd = {
+                        if (totalDragY > 80f) {
+                            onSwipeDown()
+                        }
+                        totalDragY = 0f
+                    },
+                    onDragCancel = {
+                        totalDragY = 0f
+                    },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        totalDragY += dragAmount.y
+                    }
+                )
+            },
         contentAlignment = Alignment.Center
     ) {
         if (bitmap != null) {
@@ -182,14 +228,22 @@ private suspend fun loadSongs(): List<Song> =
         val collection =
             MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
 
-        val projection = arrayOf(
+        val projectionList = mutableListOf(
             MediaStore.Audio.Media._ID,
             MediaStore.Audio.Media.TITLE,
             MediaStore.Audio.Media.ARTIST,
             MediaStore.Audio.Media.DURATION,
             MediaStore.Audio.Media.ALBUM_ID,
-            MediaStore.Audio.Media.ALBUM
+            MediaStore.Audio.Media.ALBUM,
+            MediaStore.Audio.Media.DISPLAY_NAME,
+            MediaStore.Audio.Media.SIZE
         )
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            projectionList.add(MediaStore.MediaColumns.RELATIVE_PATH)
+        }
+
+        val projection = projectionList.toTypedArray()
 
         val selection =
             "${MediaStore.Audio.Media.IS_MUSIC} != 0"
@@ -225,6 +279,18 @@ private suspend fun loadSongs(): List<Song> =
             val albumColumn =
                 it.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
 
+            val fileNameColumn =
+                it.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
+
+            val fileSizeColumn =
+                it.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE)
+
+            val folderColumn = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                it.getColumnIndex(MediaStore.Audio.Media.RELATIVE_PATH)
+            } else {
+                -1
+            }
+
             while (it.moveToNext()) {
 
                 val songId = it.getLong(idColumn)
@@ -244,7 +310,18 @@ private suspend fun loadSongs(): List<Song> =
                         albumId = it.getLong(albumIdColumn),
                         album = it.getString(albumColumn)
                             ?.takeIf { name -> name.isNotBlank() }
-                            ?: "Unknown Album"
+                            ?: "Unknown Album",
+                        fileName = it.getString(fileNameColumn) ?: "",
+                        extension = it.getString(fileNameColumn)
+                            ?.substringAfterLast('.', "")
+                            ?.lowercase()
+                            ?: "",
+                        folder = if (folderColumn >= 0) {
+                            it.getString(folderColumn) ?: ""
+                        } else {
+                            ""
+                        },
+                        fileSize = it.getLong(fileSizeColumn)
                     )
                 )
             }
@@ -262,12 +339,20 @@ private object AppContextHolder {
 fun MiniPlayerApp() {
 
     val context = LocalContext.current
+    val database = remember(context) {
+        DatabaseProvider.getDatabase(context)
+    }
+    val favoriteDao = remember(database) {
+        database.favoriteDao()
+    }
+    val favoriteEntries by favoriteDao.getAllFavorites()
+        .collectAsState(initial = emptyList())
+    val favoriteKeys = remember(favoriteEntries) {
+        favoriteEntries.map { it.songKey }.toSet()
+    }
+    val coroutineScope = rememberCoroutineScope()
 
     var isPlaying by remember {
-        mutableStateOf(false)
-    }
-
-    var isFavorite by remember {
         mutableStateOf(false)
     }
 
@@ -291,6 +376,9 @@ fun MiniPlayerApp() {
             )
         )
     }
+
+    val isFavorite = selectedSong.id != 0L &&
+        selectedSong.stableKey() in favoriteKeys
 
     val waveformCache = remember {
         mutableMapOf<Long, List<Float>>()
@@ -356,19 +444,29 @@ fun MiniPlayerApp() {
         mutableStateOf("player")
     }
 
+    var showQueue by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = showQueue && currentTab == "player") {
+        showQueue = false
+    }
+
     var librarySearchQuery by remember { mutableStateOf("") }
     var librarySortOption by remember { mutableStateOf("Title") }
     var librarySortAscending by remember { mutableStateOf(true) }
     var librarySelectedTab by remember { mutableStateOf("Songs") }
     var librarySelectedArtist by remember { mutableStateOf<String?>(null) }
     var librarySelectedAlbumId by remember { mutableStateOf<Long?>(null) }
+    var librarySelectedFolder by remember { mutableStateOf<String?>(null) }
     val librarySongsListState = rememberLazyListState()
 
     BackHandler(enabled = currentTab == "library") {
         when {
-            librarySelectedArtist != null || librarySelectedAlbumId != null -> {
+            librarySelectedArtist != null ||
+                librarySelectedAlbumId != null ||
+                librarySelectedFolder != null -> {
                 librarySelectedArtist = null
                 librarySelectedAlbumId = null
+                librarySelectedFolder = null
             }
             librarySelectedTab != "Songs" -> {
                 librarySelectedTab = "Songs"
@@ -381,6 +479,10 @@ fun MiniPlayerApp() {
 
     var songs by remember {
         mutableStateOf<List<Song>>(emptyList())
+    }
+
+    val favoriteSongs = remember(songs, favoriteKeys) {
+        songs.filter { it.stableKey() in favoriteKeys }
     }
 
     var isShuffleEnabled by remember {
@@ -684,7 +786,7 @@ fun MiniPlayerApp() {
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
+                        .then(if (showQueue && currentTab == "player") Modifier else Modifier.verticalScroll(rememberScrollState()))
                 ) {
 
                 AnimatedContent(
@@ -705,6 +807,22 @@ fun MiniPlayerApp() {
                     label = "PlayerLibraryTransition"
                 ) { screen ->
                     if (screen == "player") {
+                        if (showQueue) {
+                            QueueScreen(
+                                songs = currentQueueSongs,
+                                selectedSongId = selectedSong.id,
+                                onClose = { showQueue = false },
+                                onSongSelected = { song ->
+                                    val index = currentQueueSongs.indexOfFirst {
+                                        it.id == song.id
+                                    }
+                                    if (index >= 0) {
+                                        player?.seekTo(index, 0L)
+                                        showQueue = false
+                                    }
+                                }
+                            )
+                        } else {
                         PlayerScreen(
                             artworkBitmap = artworkBitmap,
                             artworkColors = artworkColors,
@@ -723,7 +841,23 @@ fun MiniPlayerApp() {
                             onRepeat = { cycleRepeat() },
 
                             onFavorite = {
-                                isFavorite = !isFavorite
+                                val song = selectedSong
+                                if (song.id != 0L && song.uri != Uri.EMPTY) {
+                                    val songKey = song.stableKey()
+                                    coroutineScope.launch {
+                                        if (songKey in favoriteKeys) {
+                                            favoriteDao.removeFavorite(songKey)
+                                        } else {
+                                            favoriteDao.addFavorite(
+                                                FavoriteEntity(
+                                                    songKey = songKey,
+                                                    mediaStoreId = song.id,
+                                                    contentUri = song.uri.toString()
+                                                )
+                                            )
+                                        }
+                                    }
+                                }
                             },
 
                             onPlay = {
@@ -755,12 +889,19 @@ fun MiniPlayerApp() {
                                         (duration * value).toLong()
                                     )
                                 }
+                            },
+                            onShowQueue = {
+                                if (currentQueueSongs.isNotEmpty()) {
+                                    showQueue = true
+                                }
                             }
                         )
+                        }
                     } else {
                         LibraryScreen(
                             modifier = Modifier.padding(horizontal = 24.dp),
                             songs = songs,
+                            favoriteSongs = favoriteSongs,
                             selectedSongId = selectedSong.id,
                             songsListState = librarySongsListState,
                             searchQuery = librarySearchQuery,
@@ -775,6 +916,8 @@ fun MiniPlayerApp() {
                             onSelectedArtistChange = { librarySelectedArtist = it },
                             selectedAlbumId = librarySelectedAlbumId,
                             onSelectedAlbumIdChange = { librarySelectedAlbumId = it },
+                            selectedFolder = librarySelectedFolder,
+                            onSelectedFolderChange = { librarySelectedFolder = it },
                             loading = loading,
                             hasPermission = hasPermission,
 
@@ -790,6 +933,32 @@ fun MiniPlayerApp() {
                             }
                         )
                     }
+                }
+
+                if (
+                    currentTab == "library" &&
+                    selectedSong.id != 0L &&
+                    selectedSong.uri != Uri.EMPTY
+                ) {
+                    MiniPlayer(
+                        song = selectedSong,
+                        artworkBitmap = artworkBitmap,
+                        isPlaying = isPlaying,
+                        onOpen = { currentTab = "player" },
+                        onPlayPause = {
+                            val activePlayer = player
+                            if (activePlayer != null) {
+                                if (activePlayer.isPlaying) {
+                                    activePlayer.pause()
+                                } else {
+                                    if (activePlayer.playbackState == Player.STATE_ENDED) {
+                                        activePlayer.seekTo(0)
+                                    }
+                                    activePlayer.play()
+                                }
+                            }
+                        }
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -815,6 +984,7 @@ fun MiniPlayerApp() {
                             currentTab == "library"
                         ) dynamicAccent else TextSecondary,
                         modifier = Modifier.clickable {
+                            showQueue = false
                             currentTab = "library"
                         },
                         contentDescription = "Library"
@@ -1214,7 +1384,8 @@ fun PlayerScreen(
     onRepeat: () -> Unit,
     onFavorite: () -> Unit,
     onPlay: () -> Unit,
-    onProgress: (Float) -> Unit
+    onProgress: (Float) -> Unit,
+    onShowQueue: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -1230,7 +1401,7 @@ fun PlayerScreen(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            AlbumArtwork(artworkBitmap)
+            AlbumArtwork(artworkBitmap, onShowQueue)
 
             Spacer(modifier = Modifier.height(28.dp))
 
@@ -1385,6 +1556,7 @@ fun PlayerScreen(
 fun LibraryScreen(
     modifier: Modifier = Modifier,
     songs: List<Song>,
+    favoriteSongs: List<Song>,
     selectedSongId: Long,
     songsListState: LazyListState,
     searchQuery: String,
@@ -1399,6 +1571,8 @@ fun LibraryScreen(
     onSelectedArtistChange: (String?) -> Unit,
     selectedAlbumId: Long?,
     onSelectedAlbumIdChange: (Long?) -> Unit,
+    selectedFolder: String?,
+    onSelectedFolderChange: (String?) -> Unit,
     loading: Boolean,
     hasPermission: Boolean,
     onRequestPermission: () -> Unit,
@@ -1442,12 +1616,24 @@ fun LibraryScreen(
             .sortedBy { it.second.firstOrNull()?.album?.lowercase() ?: "" }
     }
 
-    val detailSongs = remember(filteredSongs, selectedArtist, selectedAlbumId) {
+    val folderGroups = remember(songs) {
+        songs
+            .filter { it.folder.isNotBlank() }
+            .groupBy { it.folder.trim().trimEnd('/') }
+            .toList()
+            .sortedBy { it.first.lowercase() }
+    }
+
+    val detailSongs = remember(filteredSongs, songs, selectedArtist, selectedAlbumId, selectedFolder) {
         when {
             selectedArtist != null ->
                 filteredSongs.filter { it.artist.trim().ifBlank { "Unknown Artist" } == selectedArtist }
             selectedAlbumId != null ->
                 filteredSongs.filter { it.albumId == selectedAlbumId }
+            selectedFolder != null ->
+                songs.filter {
+                    it.folder.trim().trimEnd('/') == selectedFolder
+                }.sortedBy { it.title.lowercase() }
             else -> emptyList()
         }
     }
@@ -1502,22 +1688,24 @@ fun LibraryScreen(
             }
 
             else -> {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = onSearchQueryChange,
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = { Text("Search songs, artists or albums") }
-                )
+                if (selectedTab == "Songs") {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = onSearchQueryChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("Search songs, artists or albums") }
+                    )
 
-                Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
 
-                if (selectedArtist == null && selectedAlbumId == null) {
+                if (selectedArtist == null && selectedAlbumId == null && selectedFolder == null) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        listOf("Songs", "Artists", "Albums").forEach { tab ->
+                        listOf("Songs", "Artists", "Albums", "Folders", "Favorites").forEach { tab ->
                             TextButton(
                                 onClick = { onSelectedTabChange(tab) },
                                 colors = ButtonDefaults.textButtonColors(
@@ -1537,6 +1725,7 @@ fun LibraryScreen(
                         onClick = {
                             onSelectedArtistChange(null)
                             onSelectedAlbumIdChange(null)
+                            onSelectedFolderChange(null)
                         }
                     ) {
                         Text("← Back to $selectedTab")
@@ -1545,7 +1734,7 @@ fun LibraryScreen(
 
                 Spacer(modifier = Modifier.height(6.dp))
 
-                if (selectedTab == "Songs" || selectedArtist != null || selectedAlbumId != null) {
+                if (selectedTab == "Songs" || selectedArtist != null || selectedAlbumId != null || selectedFolder != null) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -1583,9 +1772,10 @@ fun LibraryScreen(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 when {
-                    selectedArtist != null || selectedAlbumId != null -> {
+                    selectedArtist != null || selectedAlbumId != null || selectedFolder != null -> {
                         val detailTitle = selectedArtist
                             ?: songs.firstOrNull { it.albumId == selectedAlbumId }?.album
+                            ?: selectedFolder?.substringAfterLast('/')
                             ?: "Unknown Album"
 
                         Text(
@@ -1688,6 +1878,59 @@ fun LibraryScreen(
                         }
                     }
 
+                    selectedTab == "Folders" -> {
+                        if (folderGroups.isEmpty()) {
+                            Text("No folders found.", color = TextSecondary)
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxWidth().heightIn(max = 600.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(items = folderGroups, key = { it.first }) { group ->
+                                    val folderPath = group.first
+                                    val folderName = folderPath.substringAfterLast('/').ifBlank { folderPath }
+
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .background(SurfaceDark)
+                                            .clickable { onSelectedFolderChange(folderPath) }
+                                            .padding(16.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                folderName,
+                                                color = TextPrimary,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                            Text(
+                                                "${group.second.size} songs",
+                                                color = TextSecondary,
+                                                fontSize = 12.sp
+                                            )
+                                        }
+                                        Text("›", color = Accent, fontSize = 24.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    selectedTab == "Favorites" -> {
+                        if (favoriteSongs.isEmpty()) {
+                            Text("No favorite songs yet.", color = TextSecondary)
+                        } else {
+                            SongList(
+                                songs = favoriteSongs,
+                                selectedSongId = selectedSongId,
+                                listState = songsListState,
+                                onSongSelected = onSongSelected
+                            )
+                        }
+                    }
+
                     else -> {
                         if (filteredSongs.isEmpty()) {
                             Text("No matching songs found.", color = TextSecondary)
@@ -1781,6 +2024,186 @@ private fun SongList(
                     color = TextSecondary,
                     fontSize = 12.sp
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MiniPlayer(
+    song: Song,
+    artworkBitmap: Bitmap?,
+    isPlaying: Boolean,
+    onOpen: () -> Unit,
+    onPlayPause: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(SurfaceDark.copy(alpha = 0.96f))
+            .clickable(onClick = onOpen)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (artworkBitmap != null) {
+            Image(
+                bitmap = artworkBitmap.asImageBitmap(),
+                contentDescription = "Album artwork",
+                modifier = Modifier
+                    .size(46.dp)
+                    .clip(RoundedCornerShape(10.dp)),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(46.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Accent),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("♫", color = Color.White, fontSize = 22.sp)
+            }
+        }
+
+        Spacer(modifier = Modifier.width(12.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                song.title,
+                color = TextPrimary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                song.artist,
+                color = TextSecondary,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        Text(
+            if (isPlaying) "Ⅱ" else "▶",
+            modifier = Modifier
+                .clip(RoundedCornerShape(10.dp))
+                .clickable(onClick = onPlayPause)
+                .padding(12.dp),
+            color = TextPrimary,
+            fontSize = 20.sp
+        )
+    }
+}
+
+@Composable
+private fun QueueScreen(
+    songs: List<Song>,
+    selectedSongId: Long,
+    onClose: () -> Unit,
+    onSongSelected: (Song) -> Unit
+) {
+    val currentSongIndex = songs.indexOfFirst {
+        it.id == selectedSongId
+    }.coerceAtLeast(0)
+    val queueListState = rememberLazyListState(
+        initialFirstVisibleItemIndex = currentSongIndex
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF101018))
+            .padding(horizontal = 24.dp, vertical = 16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column {
+                Text(
+                    "PLAYING QUEUE",
+                    color = TextPrimary,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 2.sp
+                )
+                Text(
+                    "${songs.size} songs",
+                    color = TextSecondary,
+                    fontSize = 12.sp
+                )
+            }
+
+            Text(
+                "×",
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(onClick = onClose)
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                color = TextPrimary,
+                fontSize = 30.sp
+            )
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        if (songs.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("Queue is empty", color = TextSecondary)
+            }
+        } else {
+            LazyColumn(
+                state = queueListState,
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(items = songs, key = { it.id }) { song ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(
+                                if (song.id == selectedSongId) Accent.copy(alpha = 0.2f)
+                                else SurfaceDark
+                            )
+                            .clickable { onSongSelected(song) }
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                song.title,
+                                color = if (song.id == selectedSongId) Accent else TextPrimary,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 15.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                song.artist,
+                                color = TextSecondary,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        Text(
+                            formatDuration(song.duration),
+                            color = TextSecondary,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
             }
         }
     }

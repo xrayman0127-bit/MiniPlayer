@@ -1,5 +1,7 @@
 package com.musab.miniplayer
 
+import android.app.PendingIntent
+import android.content.Intent
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.exoplayer.ExoPlayer
@@ -27,11 +29,24 @@ class MusicPlaybackService : MediaLibraryService() {
             .setAudioAttributes(audioAttributes, true)
             .build()
 
+        val sessionActivityIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+
+        val sessionActivityPendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            sessionActivityIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         mediaLibrarySession = MediaLibrarySession.Builder(
             this,
             player!!,
             libraryCallback
-        ).build()
+        )
+            .setSessionActivity(sessionActivityPendingIntent)
+            .build()
     }
 
     override fun onGetSession(
