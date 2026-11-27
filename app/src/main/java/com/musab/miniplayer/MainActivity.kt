@@ -459,23 +459,22 @@ fun MiniPlayerApp() {
     var librarySelectedFolder by remember { mutableStateOf<String?>(null) }
     val librarySongsListState = rememberLazyListState()
 
-    BackHandler(enabled = currentTab == "library") {
+    BackHandler(enabled = currentTab == "library" || currentTab == "browse") {
         when {
             librarySelectedArtist != null ||
-                librarySelectedAlbumId != null ||
-                librarySelectedFolder != null -> {
+            librarySelectedAlbumId != null ||
+            librarySelectedFolder != null -> {
                 librarySelectedArtist = null
                 librarySelectedAlbumId = null
                 librarySelectedFolder = null
-            }
-            librarySelectedTab != "Songs" -> {
-                librarySelectedTab = "Songs"
             }
             else -> {
                 currentTab = "player"
             }
         }
     }
+
+
 
     var songs by remember {
         mutableStateOf<List<Song>>(emptyList())
@@ -764,7 +763,7 @@ fun MiniPlayerApp() {
                 ) {
 
                     Text(
-                        "MINIPLAYER",
+                        "MUZORA",
                         color = TextPrimary,
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Bold,
@@ -782,157 +781,164 @@ fun MiniPlayerApp() {
 
                 Spacer(modifier = Modifier.height(28.dp))
 
-                Box(
+                Column(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .then(if (showQueue && currentTab == "player") Modifier else Modifier.verticalScroll(rememberScrollState()))
                 ) {
-
-                AnimatedContent(
-                    targetState = currentTab,
-                    transitionSpec = {
-                        if (targetState == "library") {
-                            (fadeIn(tween(220)) +
-                                slideInHorizontally(tween(220)) { it / 12 }) togetherWith
-                                (fadeOut(tween(180)) +
-                                    slideOutHorizontally(tween(180)) { -it / 12 })
-                        } else {
-                            (fadeIn(tween(220)) +
-                                slideInHorizontally(tween(220)) { -it / 12 }) togetherWith
-                                (fadeOut(tween(180)) +
-                                    slideOutHorizontally(tween(180)) { it / 12 })
-                        }
-                    },
-                    label = "PlayerLibraryTransition"
-                ) { screen ->
-                    if (screen == "player") {
-                        if (showQueue) {
-                            QueueScreen(
-                                songs = currentQueueSongs,
-                                selectedSongId = selectedSong.id,
-                                onClose = { showQueue = false },
-                                onSongSelected = { song ->
-                                    val index = currentQueueSongs.indexOfFirst {
-                                        it.id == song.id
-                                    }
-                                    if (index >= 0) {
-                                        player?.seekTo(index, 0L)
-                                        showQueue = false
-                                    }
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .then(if (showQueue && currentTab == "player") Modifier else Modifier.verticalScroll(rememberScrollState()))
+                    ) {
+                        AnimatedContent(
+                            targetState = currentTab,
+                            transitionSpec = {
+                                if (targetState != "player") {
+                                    (fadeIn(tween(220)) +
+                                        slideInHorizontally(tween(220)) { it / 12 }) togetherWith
+                                        (fadeOut(tween(180)) +
+                                            slideOutHorizontally(tween(180)) { -it / 12 })
+                                } else {
+                                    (fadeIn(tween(220)) +
+                                        slideInHorizontally(tween(220)) { -it / 12 }) togetherWith
+                                        (fadeOut(tween(180)) +
+                                            slideOutHorizontally(tween(180)) { it / 12 })
                                 }
-                            )
-                        } else {
-                        PlayerScreen(
-                            artworkBitmap = artworkBitmap,
-                            artworkColors = artworkColors,
-                            dynamicAccent = dynamicAccent,
-                            song = selectedSong,
-                            isPlaying = isPlaying,
-                            isFavorite = isFavorite,
-                            progress = progress,
-                            waveformSamples = waveformSamples,
-                            currentPosition = currentPosition,
-                            isShuffleEnabled = isShuffleEnabled,
-                            repeatMode = repeatMode,
-                            onPrevious = { previousSong() },
-                            onNext = { nextSong() },
-                            onShuffle = { toggleShuffle() },
-                            onRepeat = { cycleRepeat() },
+                            },
+                            label = "PlayerLibraryTransition"
+                        ) { screen ->
+                            if (screen == "player") {
+                                if (showQueue) {
+                                    QueueScreen(
+                                        songs = currentQueueSongs,
+                                        selectedSongId = selectedSong.id,
+                                        onClose = { showQueue = false },
+                                        onSongSelected = { song ->
+                                            val index = currentQueueSongs.indexOfFirst {
+                                                it.id == song.id
+                                            }
+                                            if (index >= 0) {
+                                                player?.seekTo(index, 0L)
+                                                showQueue = false
+                                            }
+                                        }
+                                    )
+                                } else {
+                                PlayerScreen(
+                                    artworkBitmap = artworkBitmap,
+                                    artworkColors = artworkColors,
+                                    dynamicAccent = dynamicAccent,
+                                    song = selectedSong,
+                                    isPlaying = isPlaying,
+                                    isFavorite = isFavorite,
+                                    progress = progress,
+                                    waveformSamples = waveformSamples,
+                                    currentPosition = currentPosition,
+                                    isShuffleEnabled = isShuffleEnabled,
+                                    repeatMode = repeatMode,
+                                    onPrevious = { previousSong() },
+                                    onNext = { nextSong() },
+                                    onShuffle = { toggleShuffle() },
+                                    onRepeat = { cycleRepeat() },
 
-                            onFavorite = {
-                                val song = selectedSong
-                                if (song.id != 0L && song.uri != Uri.EMPTY) {
-                                    val songKey = song.stableKey()
-                                    coroutineScope.launch {
-                                        if (songKey in favoriteKeys) {
-                                            favoriteDao.removeFavorite(songKey)
-                                        } else {
-                                            favoriteDao.addFavorite(
-                                                FavoriteEntity(
-                                                    songKey = songKey,
-                                                    mediaStoreId = song.id,
-                                                    contentUri = song.uri.toString()
-                                                )
+                                    onFavorite = {
+                                        val song = selectedSong
+                                        if (song.id != 0L && song.uri != Uri.EMPTY) {
+                                            val songKey = song.stableKey()
+                                            coroutineScope.launch {
+                                                if (songKey in favoriteKeys) {
+                                                    favoriteDao.removeFavorite(songKey)
+                                                } else {
+                                                    favoriteDao.addFavorite(
+                                                        FavoriteEntity(
+                                                            songKey = songKey,
+                                                            mediaStoreId = song.id,
+                                                            contentUri = song.uri.toString()
+                                                        )
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    },
+
+                                    onPlay = {
+                                        val activePlayer = player
+                                        if (
+                                            selectedSong.uri != Uri.EMPTY &&
+                                            activePlayer != null
+                                        ) {
+                                            if (activePlayer.isPlaying) {
+                                                activePlayer.pause()
+                                            } else {
+                                                if (
+                                                    activePlayer.playbackState ==
+                                                    Player.STATE_ENDED
+                                                ) {
+                                                    activePlayer.seekTo(0)
+                                                }
+                                                activePlayer.play()
+                                            }
+                                        }
+                                    },
+
+                                    onProgress = { value ->
+                                        progress = value
+                                        val duration = player?.duration ?: 0L
+
+                                        if (duration > 0) {
+                                            player?.seekTo(
+                                                (duration * value).toLong()
                                             )
                                         }
-                                    }
-                                }
-                            },
-
-                            onPlay = {
-                                val activePlayer = player
-                                if (
-                                    selectedSong.uri != Uri.EMPTY &&
-                                    activePlayer != null
-                                ) {
-                                    if (activePlayer.isPlaying) {
-                                        activePlayer.pause()
-                                    } else {
-                                        if (
-                                            activePlayer.playbackState ==
-                                            Player.STATE_ENDED
-                                        ) {
-                                            activePlayer.seekTo(0)
+                                    },
+                                    onShowQueue = {
+                                        if (currentQueueSongs.isNotEmpty()) {
+                                            showQueue = true
                                         }
-                                        activePlayer.play()
                                     }
-                                }
-                            },
-
-                            onProgress = { value ->
-                                progress = value
-                                val duration = player?.duration ?: 0L
-
-                                if (duration > 0) {
-                                    player?.seekTo(
-                                        (duration * value).toLong()
-                                    )
-                                }
-                            },
-                            onShowQueue = {
-                                if (currentQueueSongs.isNotEmpty()) {
-                                    showQueue = true
-                                }
-                            }
-                        )
-                        }
-                    } else {
-                        LibraryScreen(
-                            modifier = Modifier.padding(horizontal = 24.dp),
-                            songs = songs,
-                            favoriteSongs = favoriteSongs,
-                            selectedSongId = selectedSong.id,
-                            songsListState = librarySongsListState,
-                            searchQuery = librarySearchQuery,
-                            onSearchQueryChange = { librarySearchQuery = it },
-                            sortOption = librarySortOption,
-                            onSortOptionChange = { librarySortOption = it },
-                            sortAscending = librarySortAscending,
-                            onSortAscendingChange = { librarySortAscending = it },
-                            selectedTab = librarySelectedTab,
-                            onSelectedTabChange = { librarySelectedTab = it },
-                            selectedArtist = librarySelectedArtist,
-                            onSelectedArtistChange = { librarySelectedArtist = it },
-                            selectedAlbumId = librarySelectedAlbumId,
-                            onSelectedAlbumIdChange = { librarySelectedAlbumId = it },
-                            selectedFolder = librarySelectedFolder,
-                            onSelectedFolderChange = { librarySelectedFolder = it },
-                            loading = loading,
-                            hasPermission = hasPermission,
-
-                            onRequestPermission = {
-                                permissionLauncher.launch(
-                                    audioPermission()
                                 )
-                            },
+                                }
+                            } else {
+                                LibraryScreen(
+                                    modifier = Modifier.padding(horizontal = 24.dp),
+                                    browseMode = screen == "browse",
+                                    songs = songs,
+                                    favoriteSongs = favoriteSongs,
+                                    selectedSongId = selectedSong.id,
+                                    songsListState = librarySongsListState,
+                                    searchQuery = librarySearchQuery,
+                                    onSearchQueryChange = { librarySearchQuery = it },
+                                    sortOption = librarySortOption,
+                                    onSortOptionChange = { librarySortOption = it },
+                                    sortAscending = librarySortAscending,
+                                    onSortAscendingChange = { librarySortAscending = it },
+                                    selectedTab = librarySelectedTab,
+                                    onSelectedTabChange = { librarySelectedTab = it },
+                                    selectedArtist = librarySelectedArtist,
+                                    onSelectedArtistChange = { librarySelectedArtist = it },
+                                    selectedAlbumId = librarySelectedAlbumId,
+                                    onSelectedAlbumIdChange = { librarySelectedAlbumId = it },
+                                    selectedFolder = librarySelectedFolder,
+                                    onSelectedFolderChange = { librarySelectedFolder = it },
+                                    loading = loading,
+                                    hasPermission = hasPermission,
 
-                            onSongSelected = { song, queueSongs ->
-                                playSong(song, queueSongs)
-                                currentTab = "player"
+                                    onRequestPermission = {
+                                        permissionLauncher.launch(
+                                            audioPermission()
+                                        )
+                                    },
+
+                                    onSongSelected = { song, queueSongs ->
+                                        playSong(song, queueSongs)
+                                        currentTab = "player"
+                                    }
+                                )
                             }
-                        )
                     }
+
                 }
 
                 if (
@@ -985,6 +991,10 @@ fun MiniPlayerApp() {
                         ) dynamicAccent else TextSecondary,
                         modifier = Modifier.clickable {
                             showQueue = false
+                            librarySelectedTab = "Songs"
+                            librarySelectedArtist = null
+                            librarySelectedAlbumId = null
+                            librarySelectedFolder = null
                             currentTab = "library"
                         },
                         contentDescription = "Library"
@@ -1009,7 +1019,17 @@ fun MiniPlayerApp() {
                         footprint = "☰",
                         fontSize = 23.sp,
                         iconSize = 23.dp,
-                        tint = TextSecondary
+                        tint = if (currentTab == "browse") dynamicAccent else TextSecondary,
+                        modifier = Modifier.clickable {
+                            if (librarySelectedTab == "Songs") {
+                                librarySelectedTab = "Artists"
+                            }
+                            librarySelectedArtist = null
+                            librarySelectedAlbumId = null
+                            librarySelectedFolder = null
+                            currentTab = "browse"
+                        },
+                        contentDescription = "Browse"
                     )
                 }
 
@@ -1555,6 +1575,7 @@ fun PlayerScreen(
 @Composable
 fun LibraryScreen(
     modifier: Modifier = Modifier,
+    browseMode: Boolean = false,
     songs: List<Song>,
     favoriteSongs: List<Song>,
     selectedSongId: Long,
@@ -1642,7 +1663,7 @@ fun LibraryScreen(
 
     Column(modifier = modifier) {
         Text(
-            "MUSIC LIBRARY",
+            if (browseMode) "BROWSE LIBRARY" else "MUSIC LIBRARY",
             color = TextPrimary,
             fontSize = 21.sp,
             fontWeight = FontWeight.Bold
@@ -1688,13 +1709,13 @@ fun LibraryScreen(
             }
 
             else -> {
-                if (selectedTab == "Songs") {
+                if (!browseMode && selectedTab == "Songs") {
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = onSearchQueryChange,
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        label = { Text("Search songs, artists or albums") }
+                        label = { Text("Search songs") }
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
@@ -1705,7 +1726,7 @@ fun LibraryScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        listOf("Songs", "Artists", "Albums", "Folders", "Favorites").forEach { tab ->
+                        (if (browseMode) listOf("Artists", "Albums", "Folders", "Favorites") else emptyList()).forEach { tab ->
                             TextButton(
                                 onClick = { onSelectedTabChange(tab) },
                                 colors = ButtonDefaults.textButtonColors(
@@ -1734,7 +1755,7 @@ fun LibraryScreen(
 
                 Spacer(modifier = Modifier.height(6.dp))
 
-                if (selectedTab == "Songs" || selectedArtist != null || selectedAlbumId != null || selectedFolder != null) {
+                if ((!browseMode && selectedTab == "Songs") || selectedArtist != null || selectedAlbumId != null || selectedFolder != null) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
