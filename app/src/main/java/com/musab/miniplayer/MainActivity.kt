@@ -72,7 +72,6 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -151,12 +150,10 @@ private fun Song.stableKey(): String {
 @Composable
 private fun rememberAlbumArtwork(song: Song): Bitmap? {
     val context = LocalContext.current
+    var bitmap by remember(song.albumId) { mutableStateOf<Bitmap?>(null) }
 
-    val bitmap by produceState<Bitmap?>(
-        initialValue = null,
-        key1 = song.albumId,
-    ) {
-        val artwork =
+    LaunchedEffect(song.albumId) {
+        bitmap =
             withContext(Dispatchers.IO) {
                 if (song.albumId <= 0L) {
                     null
@@ -174,8 +171,6 @@ private fun rememberAlbumArtwork(song: Song): Bitmap? {
                     }.getOrNull()
                 }
             }
-
-        value = artwork
     }
 
     return bitmap
